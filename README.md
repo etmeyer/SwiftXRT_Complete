@@ -32,7 +32,7 @@ CIAO — so both need to be available before you start. `swift_xrt_doctor.py`
 - `requests` (for data download only)
 - `astroquery` (optional, fallback name resolver)
 
-`scipy` must be importable from **whichever Python ends up running the King-profile step (Step 2a) and the fit step (Step 6)**. Because the fit step needs Sherpa, and Sherpa lives only in CIAO's bundled Python, the recommended route is to let that one Python run both — which means installing scipy into the CIAO environment once with `conda install -n ciao-4.16 scipy` (see Installation, Step 3). A single CIAO shell can then run the entire pipeline.
+`scipy` must be importable from **whichever Python ends up running the King-profile step (Step 2a) and the fit step (Step 6)**. Because the fit step needs Sherpa, and Sherpa lives only in CIAO's bundled Python, the recommended route is to let that one Python run both — which means installing scipy into the CIAO environment once with `conda install -p /opt/ciao/ciao-4.16 scipy` (see Installation, Step 3). A single CIAO shell can then run the entire pipeline.
 
 > Sherpa can also be obtained via `pip install sherpa` into a standalone environment, but that is not the tested/recommended route here — CIAO is. If you go the pip route, you are responsible for making `scipy` and the other packages importable in that same environment.
 
@@ -89,8 +89,8 @@ The recommended Python for the pipeline is CIAO's bundled one, because that is w
 
 ```bash
 # Make CIAO's bundled python ship scipy too (one-time)
-conda install -n ciao-4.16 scipy
-# (substitute the conda env name for your CIAO version)
+conda install -p /opt/ciao/ciao-4.16 scipy
+# (substitute the prefix path for your CIAO install location)
 ```
 
 With this done, a single CIAO shell has HEASoft (via Step 2), Sherpa (via CIAO), and scipy — enough to run the entire pipeline end to end without juggling two shells.
@@ -129,17 +129,17 @@ After completing Steps 1–3, a healthy run from a CIAO shell with the HEASoft C
 [OK] HEASoft version 6.36
 [OK] CALDB configured
        $CALDB=/opt/CALDB
-       $CALDBCONFIG=/opt/CALDB/software/tools/caldb.config
+       $CALDBCONFIG=/opt/ciao/ciao-4.16/CALDB/software/tools/caldb.config
 [OK] Swift XRT response files present under $CALDB
 [OK] Python 3.11.6 (/opt/ciao/ciao-4.16/binexe/python3.11)
 [OK] astropy      7.2.0
 [OK] numpy        1.26.2
-[OK] scipy        1.11.4
+[OK] scipy        1.17.1
 [OK] matplotlib   3.8.2
 [OK] requests     2.31.0
 [WARN] astroquery not installed (optional; download script falls back to SIMBAD/NED/Sesame)
 [OK] sherpa       4.16.0
-[OK] Disk free at /opt: 26.9 GB
+[OK] Disk free at /opt: 26.5 GB
 
 14 checks: 13 ok, 1 warn, 0 fail
 ```
@@ -163,12 +163,12 @@ The single most useful diagnostic is the **yellow** CALDB clash: you're in a CIA
 [OK] Python 3.11.6 (/opt/ciao/ciao-4.16/binexe/python3.11)
 [OK] astropy      7.2.0
 [OK] numpy        1.26.2
-[OK] scipy        1.11.4
+[OK] scipy        1.17.1
 [OK] matplotlib   3.8.2
 [OK] requests     2.31.0
 [WARN] astroquery not installed (optional; download script falls back to SIMBAD/NED/Sesame)
 [OK] sherpa       4.16.0
-[OK] Disk free at /opt: 26.9 GB
+[OK] Disk free at /opt: 26.5 GB
 
 14 checks: 11 ok, 3 warn, 0 fail
 ```
