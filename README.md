@@ -7,173 +7,32 @@ Developed for analysis of point sources (e.g., blazars, AGN) observed across mul
 **Author:** Eileen T. Meyer ([@etmeyer](https://github.com/etmeyer))  
 **License:** MIT
 
----
-
-## Requirements
-
-The pipeline shells out to **two** separate analysis environments — HEASoft and
-CIAO — so both need to be available before you start. `swift_xrt_doctor.py`
-(see Installation, Step 4) verifies all of this in one shot.
-
-**Operating environment:**
-- Python 3.9+
-- [HEASoft](https://heasarc.gsfc.nasa.gov/lheasoft/) (tested with 6.36) — provides `xrtpipeline`, `xrtmkarf`, `grppha`, `xselect`, `ftlist`, used by the download, reduction, and extraction steps.
-- [CIAO](https://cxc.cfa.harvard.edu/ciao/) (tested with 4.16) — used **only** for [Sherpa](https://sherpa.readthedocs.io/), the fitting engine in Step 6. CIAO's bundled Python is the only supported home for Sherpa.
-
-**CALDB:**
-- [HEASoft Swift CALDB](https://heasarc.gsfc.nasa.gov/docs/heasarc/caldb/) — the calibration tree containing the Swift XRT response files at `data/swift/xrt/cpf/rmf`.
-- Sourcing CIAO repoints `$CALDB` at *its* Chandra calibration tree. If you run the fit step (Step 6) from a CIAO shell, you'll need `--caldb /path/to/heasoft/caldb` so the Swift RMFs can be found; see Installation Step 2 and the [CALDB and CIAO coexistence](#caldb-and-ciao-coexistence) note below.
-
-**Python packages:**
-- `astropy`
-- `numpy`
-- `scipy`
-- `matplotlib`
-- `requests` (for data download only)
-- `astroquery` (optional, fallback name resolver)
-
-`scipy` must be importable from **whichever Python ends up running the King-profile step (Step 2a) and the fit step (Step 6)**. Because the fit step needs Sherpa, and Sherpa lives only in CIAO's bundled Python, the recommended route is to let that one Python run both — which means installing scipy into the CIAO environment once with `conda install -p /opt/ciao/ciao-4.16 scipy` (see Installation, Step 3). A single CIAO shell can then run the entire pipeline.
-
-> Sherpa can also be obtained via `pip install sherpa` into a standalone environment, but that is not the tested/recommended route here — CIAO is. If you go the pip route, you are responsible for making `scipy` and the other packages importable in that same environment.
-
-**Data:** Swift XRT observations downloaded from the HEASARC archive (see Step 0 below), organized as OBSID subdirectories. The download and pipeline scripts handle this automatically.
+> **Documentation:** see [docs/](docs/index.md) for the full step-by-step walkthrough.
 
 ---
 
-### Step 1 — Place the pipeline
+## Quick start
 
-Clone or download the repository, place the scripts somewhere permanent, and make them executable:
-
-```bash
-# Example: install to /opt/swift-xrt-pipeline
-sudo cp -r swift-xrt-pipeline /opt/swift-xrt-pipeline
-sudo chmod +x /opt/swift-xrt-pipeline/*.py
-```
-
-### Step 2 — Site-wide shell setup (multi-user boxes)
-
-On a shared machine, put the environment setup in `/etc/bash.bashrc.local` so every user picks it up, rather than in a single user's `~/.bashrc`. The block below defines `setup_swiftxrt` (which manages only the pipeline's own `PATH`) and sources HEASoft and the HEASoft Swift CALDB:
+Download and reduce one epoch of 3C273 data, end to end:
 
 ```bash
-# /etc/bash.bashrc.local — Swift XRT pipeline site-wide setup
-setup_swiftxrt() {
-    local pipedir="/opt/swift-xrt-pipeline"
-    case ":$PATH:" in *":$pipedir:"*) ;; *) export PATH="$pipedir:$PATH" ;; esac
-    command -v swift_xrt_summary.py >/dev/null && \
-        echo "Swift XRT Pipeline ready ($(ls $pipedir/*.py 2>/dev/null | wc -l) scripts in $pipedir)"
-}
-
-# HEASoft (adjust path / version to your install)
-export HEADAS=/opt/heasoft/heasoft-6.36/x86_64-pc-linux-gnu-libc2.39
-source $HEADAS/headas-init.sh
-
-# Swift CALDB (HEASoft side, NOT CIAO's)
-source /opt/CALDB/software/tools/caldbinit.sh
-
-# Pipeline on PATH
+# 1. Setup — see docs/01-setup.md for details
 setup_swiftxrt
 
-# CIAO is intentionally NOT sourced here — users source it when they need
-# Sherpa (the fit step), e.g. by running `ciao` (alias to /opt/ciao/.../bin/ciao.sh).
+# 2. Download epoch-1 data
+swift_xrt_download.py --name "3C 273" \
+    --start-date 2008-08-04 --end-date 2011-07-06 \
+    --outdir XRT_input
+
+# 3-8. See docs/index.md for the full walkthrough
 ```
 
-`setup_swiftxrt` only puts the pipeline scripts on `PATH` — it does **not** touch HEASoft, CIAO, or CALDB. Those are the separate `source` lines above, sourced by the user or admin.
+---
 
-> **Single-user install:** If you lack root, or you're the only user, put the same block in your `~/.bashrc` (or `~/.bash_profile`) instead. On a multi-user machine, a `~/.bashrc` install sets up the environment for only the one user who did it.
+## Setup
 
-If you run the fit step from a CIAO shell, see the [CALDB and CIAO coexistence](#caldb-and-ciao-coexistence) note below for `--caldb`.
-
-### Step 3 — One-time scipy into CIAO
-
-The recommended Python for the pipeline is CIAO's bundled one, because that is where Sherpa lives. CIAO does not ship `scipy`, which the King-profile step (Step 2a) and a few other utilities need, so install it into the CIAO environment once:
-
-```bash
-# Make CIAO's bundled python ship scipy too (one-time)
-conda install -p /opt/ciao/ciao-4.16 scipy
-# (substitute the prefix path for your CIAO install location)
-```
-
-With this done, a single CIAO shell has HEASoft (via Step 2), Sherpa (via CIAO), and scipy — enough to run the entire pipeline end to end without juggling two shells.
-
-### Step 4 — Verify with the doctor
-
-`swift_xrt_doctor.py` runs a green/yellow/red checklist over everything the pipeline assumes about the environment and exits non-zero if anything fails:
-
-```bash
-swift_xrt_doctor.py             # full output, colored if on a terminal
-swift_xrt_doctor.py --quiet     # only failures printed
-swift_xrt_doctor.py --no-color  # plain output for logs
-# Exit code 0 only if every check passes — usable in CI / cron preambles.
-```
-
-It checks that:
-
-- the pipeline scripts are on `PATH` (Step 1 / `setup_swiftxrt`),
-- HEASoft is loaded (`$HEADAS` set) and the FTOOLS resolve,
-- the CALDB environment variables are set (and warns if `$CALDB` points at CIAO's),
-- the Swift XRT response files are present under `$CALDB`,
-- Sherpa is importable,
-- the required Python packages are importable,
-- there is free disk at `/opt`.
-
-After completing Steps 1–3, a healthy run from a CIAO shell with the HEASoft CALDB in front looks like this (the lone `[WARN]` is the optional `astroquery` resolver):
-
-```
-[OK] Pipeline on PATH: swift_xrt_summary.py -> /opt/swift-xrt-pipeline/swift_xrt_summary.py
-[OK] HEASoft loaded ($HEADAS set, all FTOOLS on PATH)
-       xrtpipeline  /opt/heasoft/heasoft-6.36/x86_64-pc-linux-gnu-libc2.39/bin/xrtpipeline
-       xrtmkarf     /opt/heasoft/heasoft-6.36/x86_64-pc-linux-gnu-libc2.39/bin/xrtmkarf
-       grppha       /opt/heasoft/heasoft-6.36/x86_64-pc-linux-gnu-libc2.39/bin/grppha
-       xselect      /opt/heasoft/heasoft-6.36/x86_64-pc-linux-gnu-libc2.39/bin/xselect
-       ftlist       /opt/heasoft/heasoft-6.36/x86_64-pc-linux-gnu-libc2.39/bin/ftlist
-[OK] HEASoft version 6.36
-[OK] CALDB configured
-       $CALDB=/opt/CALDB
-       $CALDBCONFIG=/opt/ciao/ciao-4.16/CALDB/software/tools/caldb.config
-[OK] Swift XRT response files present under $CALDB
-[OK] Python 3.11.6 (/opt/ciao/ciao-4.16/binexe/python3.11)
-[OK] astropy      7.2.0
-[OK] numpy        1.26.2
-[OK] scipy        1.17.1
-[OK] matplotlib   3.8.2
-[OK] requests     2.31.0
-[WARN] astroquery not installed (optional; download script falls back to SIMBAD/NED/Sesame)
-[OK] sherpa       4.16.0
-[OK] Disk free at /opt: 26.5 GB
-
-14 checks: 13 ok, 1 warn, 0 fail
-```
-
-The single most useful diagnostic is the **yellow** CALDB clash: you're in a CIAO shell and `$CALDB` is still pointing at CIAO's Chandra tree instead of HEASoft's Swift CALDB:
-
-```
-[OK] Pipeline on PATH: swift_xrt_summary.py -> /opt/swift-xrt-pipeline/swift_xrt_summary.py
-[OK] HEASoft loaded ($HEADAS set, all FTOOLS on PATH)
-       xrtpipeline  /opt/heasoft/heasoft-6.36/x86_64-pc-linux-gnu-libc2.39/bin/xrtpipeline
-       xrtmkarf     /opt/heasoft/heasoft-6.36/x86_64-pc-linux-gnu-libc2.39/bin/xrtmkarf
-       grppha       /opt/heasoft/heasoft-6.36/x86_64-pc-linux-gnu-libc2.39/bin/grppha
-       xselect      /opt/heasoft/heasoft-6.36/x86_64-pc-linux-gnu-libc2.39/bin/xselect
-       ftlist       /opt/heasoft/heasoft-6.36/x86_64-pc-linux-gnu-libc2.39/bin/ftlist
-[OK] HEASoft version 6.36
-[WARN] $CALDB points inside a CIAO install (/opt/ciao/ciao-4.16/CALDB)
-       This is the Chandra CALDB, not HEASoft's Swift CALDB.
-       Pass --caldb /opt/CALDB to parallel_fit.py / swift_xrt_fit_spectra.py.
-[WARN] Swift XRT RMFs found at /opt/CALDB but not under $CALDB
-       Point $CALDB at /opt/CALDB or pass --caldb /opt/CALDB.
-[OK] Python 3.11.6 (/opt/ciao/ciao-4.16/binexe/python3.11)
-[OK] astropy      7.2.0
-[OK] numpy        1.26.2
-[OK] scipy        1.17.1
-[OK] matplotlib   3.8.2
-[OK] requests     2.31.0
-[WARN] astroquery not installed (optional; download script falls back to SIMBAD/NED/Sesame)
-[OK] sherpa       4.16.0
-[OK] Disk free at /opt: 26.5 GB
-
-14 checks: 11 ok, 3 warn, 0 fail
-```
-
-In that case, pass `--caldb /opt/CALDB` to the fit step (or re-source the HEASoft CALDB ahead of CIAO's). If you see any `[FAIL]` lines, the doctor prints exactly what to run to fix each one.
+See [docs/01-setup.md](docs/01-setup.md) for installation, environment
+setup, and the `swift_xrt_doctor.py` verification script.
 
 ---
 
@@ -199,25 +58,11 @@ The pipeline is designed to be run step-by-step, with visual inspection at each 
 7. Customize plot (optional)    →  plot_lightcurve.py
 ```
 
-### Step 0: Download and reduce data
+### Step 0a — Download → see [docs/02-download.md](docs/02-download.md)
 
-**0a.** Download raw observations from the HEASARC archive:
+### Step 0b — Run xrtpipeline
 
-```bash
-# By source name (resolves coordinates automatically)
-swift_xrt_download.py --name "3C 273" --outdir XRT_input
-
-# By coordinates
-swift_xrt_download.py --ra 187.2779 --dec 2.0524 --radius 12 --outdir XRT_input
-
-# Preview what's available without downloading
-swift_xrt_download.py --name "3C 273" --list-only
-
-# Download specific observations from a file
-swift_xrt_download.py --obsid-file my_obsids.txt --outdir XRT_input
-```
-
-**0b.** Run the Swift XRT pipeline to produce cleaned level-2 event files:
+Run the Swift XRT pipeline to produce cleaned level-2 event files:
 
 ```bash
 # Process all OBSIDs (sequential)
