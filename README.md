@@ -69,6 +69,8 @@ setup_swiftxrt
 
 All scripts can then be called by name from any directory.
 
+Run `swift_xrt_doctor.py` to verify your environment before the first pipeline run.
+
 ---
 
 ## Workflow Overview
