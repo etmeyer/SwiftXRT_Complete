@@ -15,6 +15,7 @@ Features:
     - Test mode: download only the first N observations (--test N)
     - Resume support: skips files that already exist with the correct size
     - Overwrite mode: force re-download of existing files (--overwrite)
+    - Date-window filtering of catalog results (--start-date / --end-date)
     - Progress tracker with ETA for multi-observation downloads
 
 Requirements:
@@ -51,6 +52,10 @@ Usage:
 
     # List observations without downloading
     python swift_xrt_download.py --name "Cyg X-1" --list-only
+
+    # List only observations in a date window (end is exclusive)
+    python swift_xrt_download.py --name "3C 273" --list-only \
+        --start-date 2008-08-04 --end-date 2011-07-06
 """
 
 import argparse
@@ -60,6 +65,7 @@ import re
 import sys
 import time
 import xml.etree.ElementTree as ET
+from datetime import date, timedelta
 from pathlib import Path
 
 import requests
@@ -640,6 +646,14 @@ def build_file_filter(modes: list[str] | None = None,
     -------
     callable(str) -> bool
         True if the file should be downloaded, False to skip it.
+
+    Note
+    ----
+    An auxil-payload filter (keeping only the files xrtpipeline reads) was
+    considered, but xrtpipeline's ``prefilter`` step requires the orbit file
+    ``SWIFT_TLE_ARCHIVE.txt`` and the spacecraft-housekeeping ``sen.hk`` —
+    both of which the bug log had assumed were dispensable.  Pruning them
+    breaks every OBSID, so the full auxil/ directory is downloaded as-is.
     """
     # Pre-compile patterns
     # Swift event filenames look like: sw{obsid}x{mode}{…}.evt[.gz]
@@ -697,7 +711,11 @@ def download_xrt_products(obsid: str, outdir: Path,
     dict with keys: downloaded (int), skipped (int), failed (int), filtered (int)
     """
     if products is None:
-        products = ["xrt/event", "xrt/hk"]
+        # NOTE: auxil/ lives at the OBSID top level (<obsid>/auxil/), NOT under
+        # xrt/ — xrtpipeline needs the attitude file sw<obsid>sat.fits.gz, the
+        # orbit file SWIFT_TLE_ARCHIVE.txt, and sw<obsid>sen.hk from here. A
+        # previous "xrt/auxil" default 404'd and broke every OBSID.
+        products = ["xrt/event", "xrt/hk", "auxil"]
 
     stats = {"downloaded": 0, "skipped": 0, "failed": 0, "filtered": 0}
 
@@ -905,8 +923,81 @@ def parse_obsid_file(filepath: str) -> list[str]:
 
 
 # ---------------------------------------------------------------------------
+# Date-window filtering (client-side, applied to catalog query results)
+# ---------------------------------------------------------------------------
+
+# MJD 40587 == 1970-01-01 (the Unix epoch), used to turn an MJD into a date.
+_MJD_UNIX_EPOCH = 40587
+# Catalog columns that may carry an observation date, in preference order.
+_DATE_FIELDS = ("start_time", "time", "start_date", "obs_start")
+
+
+def _obs_to_date(obs: dict) -> date | None:
+    """Best-effort UTC calendar date for one catalog row.
+
+    swiftmastr returns ``start_time`` as an MJD float (e.g. '56725.7111');
+    some other HEASARC tables return an ISO 'YYYY-MM-DD …' string.  Returns a
+    ``datetime.date`` or None if no date field is parseable.
+    """
+    for field in _DATE_FIELDS:
+        val = (obs.get(field) or "").strip()
+        if not val:
+            continue
+        # ISO date string?
+        m = re.match(r"(\d{4}-\d{2}-\d{2})", val)
+        if m:
+            try:
+                return date.fromisoformat(m.group(1))
+            except ValueError:
+                pass
+        # MJD float?
+        try:
+            mjd = float(val.split()[0])
+        except ValueError:
+            continue
+        if 30000 <= mjd <= 90000:  # sane MJD range (~1958 .. ~2123)
+            return date(1970, 1, 1) + timedelta(days=int(mjd - _MJD_UNIX_EPOCH))
+    return None
+
+
+def filter_by_date(observations: list[dict],
+                   start_date: date | None,
+                   end_date: date | None) -> tuple[list[dict], int]:
+    """Keep observations with start date in [start_date, end_date).
+
+    The end is exclusive (the conventional half-open time window).  Rows with
+    no parseable date are dropped when a filter is active; the count of such
+    rows is returned so the caller can warn about them.
+    """
+    if not start_date and not end_date:
+        return observations, 0
+    kept: list[dict] = []
+    undated = 0
+    for obs in observations:
+        d = _obs_to_date(obs)
+        if d is None:
+            undated += 1
+            continue
+        if start_date and d < start_date:
+            continue
+        if end_date and d >= end_date:
+            continue
+        kept.append(obs)
+    return kept, undated
+
+
+# ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
+
+def _isodate(s: str) -> date:
+    """argparse type converter: parse YYYY-MM-DD, error clearly otherwise."""
+    try:
+        return date.fromisoformat(s)
+    except ValueError:
+        raise argparse.ArgumentTypeError(
+            f"invalid date '{s}': expected YYYY-MM-DD")
+
 
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
@@ -916,7 +1007,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
     grp = p.add_mutually_exclusive_group(required=True)
     grp.add_argument("--name", "-n", type=str,
-                      help="Source name to resolve (e.g. 'Crab Nebula', 'GRS 1915+105').")
+                      help="Source name to resolve (e.g. 'Crab Nebula', "
+                           "'GRS 1915+105'). Resolves to coordinates then "
+                           "performs a 12' cone search; multiple targets in "
+                           "the same field will all be returned. Filter on "
+                           "observation date or target name yourself in the "
+                           "listing output if you need only one source.")
     grp.add_argument("--ra", type=float,
                       help="Right Ascension in decimal degrees (J2000). Must also give --dec.")
     grp.add_argument("--obsid", type=str,
@@ -939,10 +1035,20 @@ def build_parser() -> argparse.ArgumentParser:
                    help="Output directory (default: ./swift_xrt_data).")
     p.add_argument("--list-only", "-l", action="store_true",
                    help="List matching observations without downloading.")
+    p.add_argument("--start-date", type=_isodate, default=None,
+                   metavar="YYYY-MM-DD",
+                   help="Only keep observations on or after this date (UTC, "
+                        "inclusive). Applies to --list-only and to the "
+                        "--name / --ra / --dec catalog query.")
+    p.add_argument("--end-date", type=_isodate, default=None,
+                   metavar="YYYY-MM-DD",
+                   help="Only keep observations strictly before this date "
+                        "(UTC, exclusive end). Applies to --list-only and to "
+                        "the --name / --ra / --dec catalog query.")
     p.add_argument("--products", type=str, nargs="+",
                    default=None,
                    help="XRT product subdirs to download, e.g. 'xrt/event xrt/products'. "
-                        "Default: xrt/event xrt/hk")
+                        "Default: xrt/event xrt/hk auxil")
     p.add_argument("--mode", type=str, nargs="+", default=None,
                    metavar="MODE",
                    help="Only download event files for these XRT modes. "
@@ -966,6 +1072,13 @@ def main():
     obsid_list: list[str] = []          # final list of obsids to download
     observations: list[dict] = []       # catalog rows (only for Mode B)
 
+    # Date filtering needs the catalog metadata, which only the --name/--ra/--dec
+    # path produces. For direct obsid input there is nothing to filter against.
+    if (args.start_date or args.end_date) and (args.obsid or args.obsid_file):
+        print("[warn] --start-date/--end-date are ignored for --obsid / "
+              "--obsid-file (no catalog dates available); use --name / --ra "
+              "/ --dec to filter by date.", file=sys.stderr)
+
     if args.obsid:
         # --- Single obsid ---
         obsid_list = [args.obsid.strip()]
@@ -988,6 +1101,20 @@ def main():
         if not observations:
             print("[info] No observations found. Try increasing --radius.")
             sys.exit(0)
+
+        # Client-side date-window filter (MJD-aware) on the catalog results.
+        if args.start_date or args.end_date:
+            n_before = len(observations)
+            observations, undated = filter_by_date(
+                observations, args.start_date, args.end_date)
+            print(f"Listed {n_before} obs ({len(observations)} after date filter)",
+                  file=sys.stderr)
+            if undated:
+                print(f"[warn] {undated} observation(s) had no parseable date "
+                      f"and were dropped by the date filter.", file=sys.stderr)
+            if not observations:
+                print("[info] No observations remain after date filtering.")
+                sys.exit(0)
 
         print_observations(observations)
 
