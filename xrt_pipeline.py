@@ -35,11 +35,15 @@ Author: Eileen T. Meyer
 import os
 import re
 import sys
+import pty
+import signal
+import shutil
 import argparse
+import tempfile
 import subprocess
 import time
 from pathlib import Path
-from typing import Optional, Union, Dict
+from typing import Optional, Union, Dict, Tuple
 from concurrent.futures import ProcessPoolExecutor, as_completed
 
 
@@ -122,6 +126,112 @@ def verify_level2_products(output_path: Path, input_path: Path,
 
 
 # ---------------------------------------------------------------
+# Subprocess execution (headless-safe, with timeout + clean kill)
+# ---------------------------------------------------------------
+
+def _run_xrtpipeline(
+    cmd, cwd: str, env: dict, timeout: int,
+) -> Tuple[Optional[int], str, str, bool]:
+    """
+    Run ``cmd`` with a private pseudo-terminal as its controlling
+    terminal and a hard wall-clock timeout.
+
+    Why a pty (controlling-terminal fix)
+    ------------------------------------
+    Several HEASoft tasks (xrthkproc, xrtfilter, ... anything that goes
+    through headas_stdio.c) call ``open("/dev/tty")`` at start-up to
+    redirect prompts. With no controlling terminal -- cron, nohup,
+    systemd, a detached SSH session -- that open fails with ENXIO
+    ("No such device or address") and the task aborts:
+
+        ERROR: No such device or address
+        Task xrthkproc 0.0 terminating with status 6
+        Unable to redirect prompts to the /dev/tty (headas_stdio.c:152)
+
+    ``mode=h`` does NOT fix this: the open happens regardless of mode,
+    and xrtpipeline's own (Perl) argument parser rejects ``mode=h``
+    outright. The robust fix is to give the child a real controlling
+    terminal. We allocate a pty, and in the child (post-fork, pre-exec)
+    start a new session and open the pty slave as session leader so it
+    becomes the controlling terminal -- exactly what ``script -qec``
+    did as the Task-1.1 band-aid, but native and per-process.
+
+    The pty is used ONLY as the controlling terminal. Real stdout and
+    stderr are captured on ordinary pipes so the caller can log them
+    and surface them on failure (no stream swallowing). stdin is
+    /dev/null so any tool that ignores the pty and reads stdin gets EOF
+    rather than blocking.
+
+    Timeout / clean kill
+    --------------------
+    ``os.setsid()`` makes the child a process-group leader, so on
+    timeout we ``killpg(SIGKILL)`` the whole group and every descendant
+    it spawned (xrtproducts, xselect, ...) dies too -- not just the
+    xrtpipeline driver.
+
+    Returns ``(returncode, stdout, stderr, timed_out)``.
+    """
+    master_fd, slave_fd = pty.openpty()
+    slave_name = os.ttyname(slave_fd)
+
+    def _preexec():
+        # New session (drops any inherited controlling tty), then open
+        # the pty slave as the session leader so it becomes this
+        # process's controlling terminal and open("/dev/tty") succeeds.
+        os.setsid()
+        fd = os.open(slave_name, os.O_RDWR)
+        os.close(fd)
+
+    proc = subprocess.Popen(
+        cmd,
+        cwd=cwd,
+        env=env,
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        preexec_fn=_preexec,
+    )
+    # The parent does not use the slave end. Keep the master open for
+    # the child's lifetime -- closing it would tear down the pty and
+    # break any further open("/dev/tty") in the child.
+    os.close(slave_fd)
+
+    timed_out = False
+    try:
+        stdout, stderr = proc.communicate(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        timed_out = True
+        try:
+            os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+        except (ProcessLookupError, PermissionError):
+            pass
+        stdout, stderr = proc.communicate()
+    finally:
+        os.close(master_fd)
+
+    return proc.returncode, stdout, stderr, timed_out
+
+
+def _write_run_log(log_file, obs_id, cmd_str, returncode,
+                   elapsed_s, stdout, stderr, reason=None):
+    """Write the full xrtpipeline stdout+stderr verbatim to log_file."""
+    with open(log_file, 'w') as f:
+        f.write(f"# xrtpipeline log for ObsID {obs_id}\n")
+        f.write(f"# Command: {cmd_str}\n")
+        if reason:
+            f.write(f"# Result: FAILED ({reason})\n")
+        f.write(f"# Return code: {returncode}\n")
+        f.write(f"# Elapsed: {elapsed_s:.1f} s\n\n")
+        if stdout:
+            f.write("=== STDOUT ===\n")
+            f.write(stdout)
+        if stderr:
+            f.write("\n=== STDERR ===\n")
+            f.write(stderr)
+
+
+# ---------------------------------------------------------------
 # Run xrtpipeline on a single OBSID
 # ---------------------------------------------------------------
 
@@ -137,6 +247,7 @@ def run_pipeline(
     exprpcgrade: str = '0-12',
     exprwtgrade: str = '0-2',
     exprpdgrade: str = '0-2',
+    timeout: int = 600,
     logdir: Optional[Union[Path, str]] = None,
     quiet: bool = False,
     env: Optional[dict] = None,
@@ -161,12 +272,17 @@ def run_pipeline(
     exprpcgrade   : PC-mode grade selection
     exprwtgrade   : WT-mode grade selection
     exprpdgrade   : PD-mode grade selection
+    timeout       : Per-OBSID wall-clock limit in seconds. On timeout
+                    the whole xrtpipeline process group is killed and
+                    the OBSID is recorded as FAILED so the batch can
+                    continue instead of one stuck worker hanging it.
     logdir        : Directory for log files (default: output_path)
     quiet         : Suppress terminal output (for parallel mode)
 
     Returns
     -------
-    dict with keys: obs_id, success, products, elapsed_s, log_file
+    dict with keys: obs_id, success, products, elapsed_s, log_file,
+    reason, stderr_tail
     """
     data_path = Path(data_path).resolve()
     output_path = Path(output_path).resolve()
@@ -177,6 +293,8 @@ def run_pipeline(
         'products': {},
         'elapsed_s': 0,
         'log_file': None,
+        'reason': None,       # why it failed (timeout / exit code / ...)
+        'stderr_tail': None,  # tail of the real diagnostic on failure
     }
 
     # Validate input
@@ -233,67 +351,75 @@ def run_pipeline(
     if not quiet:
         print(f"  [CMD] {cmd_str}")
 
-    # Run xrtpipeline
-    # CRITICAL: Use cwd= instead of os.chdir() — os.chdir is
-    # process-wide and NOT safe for parallel execution. The cwd=
-    # parameter sets the working directory only for the subprocess.
+    # Per-OBSID private, writable PFILES directory.
+    # WHY: HEASoft FTOOLs read/write their parameter (.par) files under
+    # the first entry of $PFILES. The shared default ($HOME/pfiles) is
+    # easily polluted -- on amorgos, CIAO's bundled prefilter learned a
+    # non-existent CIAO leapsec path into $HOME/pfiles/prefilter.par, so
+    # xrtpipeline's prefilter step aborts with
+    #     couldn't get parameter 'leapname' [file not found ...]
+    #     (PIL_BAD_FILE_ACCESS)
+    # even though $HEADAS/refdata/leapsec.fits is perfectly readable.
+    # A fresh private pfiles dir prepended to $HEADAS/syspfiles forces
+    # every tool to copy the pristine system defaults, dodging the
+    # pollution -- and makes parallel workers race-free (no shared .par).
+    run_env = (env or os.environ).copy()
+    headas = run_env.get('HEADAS', '')
+    pfiles_dir = tempfile.mkdtemp(prefix=f'xrtpipe_pf_{obs_id}_')
+    run_env['PFILES'] = (f"{pfiles_dir};{headas}/syspfiles"
+                         if headas else pfiles_dir)
+
+    # Run xrtpipeline.
+    # CRITICAL: pass cwd= rather than os.chdir() -- os.chdir is
+    # process-wide and unsafe for parallel execution; cwd= sets the
+    # working directory for this subprocess only.
     t0 = time.time()
-
+    returncode, stdout, stderr, timed_out = None, '', '', False
+    run_error = None
     try:
-        proc = subprocess.run(
-            cmd,
-            cwd=str(data_path),  # safe per-subprocess working dir
-            capture_output=True,
-            text=True,
-            timeout=3600,  # 1 hour timeout per OBSID
-            env=env,  # None = inherit parent env; explicit dict for parallel
-        )
-
-        returncode = proc.returncode
-        result['success'] = (returncode == 0)
-        result['elapsed_s'] = time.time() - t0
-
-        # Write log file
-        with open(log_file, 'w') as f:
-            f.write(f"# xrtpipeline log for ObsID {obs_id}\n")
-            f.write(f"# Command: {cmd_str}\n")
-            f.write(f"# Return code: {returncode}\n")
-            f.write(f"# Elapsed: {result['elapsed_s']:.1f} s\n\n")
-            if proc.stdout:
-                f.write("=== STDOUT ===\n")
-                f.write(proc.stdout)
-            if proc.stderr:
-                f.write("\n=== STDERR ===\n")
-                f.write(proc.stderr)
-
-        if not quiet:
-            if returncode == 0:
-                print(f"  [SUCCESS] {obs_id} "
-                      f"({result['elapsed_s']:.0f}s)")
-            else:
-                print(f"  [FAILED]  {obs_id} exit code {returncode}")
-                # Print last few lines of stderr for debugging
-                if proc.stderr:
-                    lines = proc.stderr.strip().split('\n')
-                    for line in lines[-5:]:
-                        print(f"    {line}")
-
-    except subprocess.TimeoutExpired:
-        result['elapsed_s'] = time.time() - t0
-        if not quiet:
-            print(f"  [TIMEOUT] {obs_id} exceeded 1 hour limit")
-        with open(log_file, 'w') as f:
-            f.write(f"# xrtpipeline TIMEOUT for ObsID {obs_id}\n")
-            f.write(f"# Command: {cmd_str}\n")
-        return result
-
+        returncode, stdout, stderr, timed_out = _run_xrtpipeline(
+            cmd, cwd=str(data_path), env=run_env, timeout=timeout)
     except Exception as exc:
-        result['elapsed_s'] = time.time() - t0
+        run_error = exc
+    finally:
+        shutil.rmtree(pfiles_dir, ignore_errors=True)
+
+    result['elapsed_s'] = time.time() - t0
+
+    # Classify the outcome (loud, explicit -- never a silent skip).
+    if run_error is not None:
+        result['reason'] = f"wrapper error: {run_error}"
+        stderr = stderr or str(run_error)
+    elif timed_out:
+        result['reason'] = f"timeout after {timeout} seconds"
+    elif returncode != 0:
+        result['reason'] = f"exit code {returncode}"
+    result['success'] = result['reason'] is None
+
+    # Always write the full log (stdout + stderr verbatim, never
+    # swallowed -- swallowing is what hid the headless leapname error).
+    _write_run_log(log_file, obs_id, cmd_str, returncode,
+                   result['elapsed_s'], stdout, stderr,
+                   reason=result['reason'])
+
+    if not result['success']:
+        # Surface the real diagnostic instead of burying it in the log.
+        diag = stderr.strip() or stdout.strip()
+        result['stderr_tail'] = "\n".join(diag.splitlines()[-15:])
         if not quiet:
-            print(f"  [ERROR] {obs_id}: {exc}")
+            print(f"  [FAILED]  {obs_id} ({result['reason']})")
+            if result['stderr_tail']:
+                print("    --- xrtpipeline output (tail) ---",
+                      file=sys.stderr)
+                for line in result['stderr_tail'].splitlines():
+                    print(f"    {line}", file=sys.stderr)
+            print(f"    (full log: {log_file})")
         return result
 
-    # Verify products
+    if not quiet:
+        print(f"  [SUCCESS] {obs_id} ({result['elapsed_s']:.0f}s)")
+
+    # Verify products (only meaningful on a successful run).
     products = verify_level2_products(output_path, data_path, obs_id)
     result['products'] = products
 
@@ -424,18 +550,26 @@ def batch_run_pipeline(
                 try:
                     r = future.result()
                     results[obs_id] = r
-                    status = 'OK' if r['success'] else 'FAIL'
                     elapsed = f"{r['elapsed_s']:.0f}s"
-                    print(f"  [{completed}/{n_obs}] {obs_id}: "
-                          f"{status} ({elapsed})", flush=True)
+                    if r['success']:
+                        print(f"  [{completed}/{n_obs}] {obs_id}: "
+                              f"OK ({elapsed})", flush=True)
+                    else:
+                        print(f"  [{completed}/{n_obs}] {obs_id}: "
+                              f"FAILED ({elapsed}) -- "
+                              f"{r.get('reason') or 'unknown'}",
+                              flush=True)
                 except Exception as exc:
                     results[obs_id] = {
                         'obs_id': obs_id, 'success': False,
                         'products': {}, 'elapsed_s': 0,
                         'log_file': None,
+                        'reason': f"worker exception: {exc}",
+                        'stderr_tail': None,
                     }
                     print(f"  [{completed}/{n_obs}] {obs_id}: "
-                          f"EXCEPTION: {exc}", flush=True)
+                          f"FAILED -- worker exception: {exc}",
+                          flush=True)
 
     batch_elapsed = time.time() - t0_batch
 
@@ -454,10 +588,17 @@ def batch_run_pipeline(
     if failed:
         print(f"  FAILED  : {len(failed)}")
         for obs in sorted(failed):
-            print(f"            {obs}")
+            reason = results[obs].get('reason') or 'unknown'
+            print(f"    FAILED: {obs} ({reason})")
+            tail = results[obs].get('stderr_tail')
+            if tail:
+                # Last couple of lines of the real diagnostic, so the
+                # cause is visible in the summary, not just the log.
+                for line in tail.splitlines()[-2:]:
+                    print(f"            | {line}")
             log = results[obs].get('log_file')
             if log:
-                print(f"              log: {log}")
+                print(f"            log: {log}")
     print(f"{'='*60}\n")
 
     return results
@@ -504,6 +645,12 @@ def main():
                         choices=['yes', 'no'],
                         help='Overwrite existing output '
                              '(default: yes)')
+    parser.add_argument('--timeout', type=int, default=600,
+                        help='Per-OBSID wall-clock limit in seconds '
+                             '(default: 600). On timeout the stuck '
+                             'xrtpipeline process group is killed, the '
+                             'OBSID is marked FAILED, and the batch '
+                             'continues.')
     args = parser.parse_args()
 
     kwargs = dict(
@@ -511,6 +658,7 @@ def main():
         extractproducts=args.extractproducts,
         cleanup=args.cleanup,
         clobber=args.clobber,
+        timeout=args.timeout,
     )
 
     if args.batch:
