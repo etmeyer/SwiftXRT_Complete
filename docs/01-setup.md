@@ -1,11 +1,10 @@
 # Step 1 — Setup
 
-Install the pipeline scripts, make the two external analysis environments
-(HEASoft and CIAO) available, and verify the whole thing with
-`swift_xrt_doctor.py`. This is the foundation every later step assumes: the
+Summary: Here you will find instructions on installing the pipeline scripts, making the two external analysis environments
+(HEASoft and CIAO) available/correct, and how to verify the whole thing with
+`swift_xrt_doctor.py`. This is necessary for later steps as the
 download and reduction steps shell out to HEASoft FTOOLS, and the fit step
-runs inside CIAO's bundled Python (the only supported home for Sherpa). Get a
-clean doctor run here and the rest of the workflow has what it needs.
+runs inside CIAO's bundled Python (the only supported home for Sherpa). Assuming the doctor script returns a green light you should be good to go for all future steps. 
 
 ## What runs
 
