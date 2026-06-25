@@ -131,6 +131,7 @@ def run_pipeline(
     srcra: float,
     srcdec: float,
     createexpomap: str = 'yes',
+    extractproducts: str = 'no',
     cleanup: str = 'no',
     clobber: str = 'yes',
     exprpcgrade: str = '0-12',
@@ -149,6 +150,12 @@ def run_pipeline(
     output_path   : Path to the output directory
     srcra/srcdec  : Source coordinates in decimal degrees
     createexpomap : Create exposure map? ('yes'/'no')
+    extractproducts : Run xrtproducts to extract source spectra/light
+                    curves? ('yes'/'no'). Default 'no': downstream
+                    (parallel_extract.py) regenerates all source
+                    products from the cleaned event files, so the
+                    per-OBSID xrtproducts step is wasted work -- and it
+                    is where the xselect hang on certain OBSIDs occurs.
     cleanup       : Remove intermediate files? ('yes'/'no')
     clobber       : Overwrite existing output? ('yes'/'no')
     exprpcgrade   : PC-mode grade selection
@@ -212,6 +219,7 @@ def run_pipeline(
         srcra=srcra,
         srcdec=srcdec,
         createexpomap=createexpomap,
+        extractproducts=extractproducts,
         cleanup=cleanup,
         clobber=clobber,
         exprpcgrade=exprpcgrade,
@@ -481,6 +489,13 @@ def main():
     parser.add_argument('--createexpomap', type=str, default='yes',
                         choices=['yes', 'no'],
                         help='Create exposure maps (default: yes)')
+    parser.add_argument('--extractproducts', type=str, default='no',
+                        choices=['yes', 'no'],
+                        help='Run xrtproducts to extract source '
+                             'spectra/light curves (default: no). '
+                             'Downstream regenerates these from the '
+                             'cleaned event files, and this step is '
+                             'where the xselect hang occurs.')
     parser.add_argument('--cleanup', type=str, default='no',
                         choices=['yes', 'no'],
                         help='Remove intermediate files '
@@ -493,6 +508,7 @@ def main():
 
     kwargs = dict(
         createexpomap=args.createexpomap,
+        extractproducts=args.extractproducts,
         cleanup=args.cleanup,
         clobber=args.clobber,
     )
