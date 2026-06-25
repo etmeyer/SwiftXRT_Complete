@@ -78,24 +78,45 @@ def get_obs_id(data_path: Path) -> Optional[str]:
 # Product verification
 # ---------------------------------------------------------------
 
-def verify_level2_products(output_path: Path, obs_id: str) -> dict:
+def verify_level2_products(output_path: Path, input_path: Path,
+                           obs_id: str) -> dict:
     """
-    Check the output directory for key Level-2 products.
-    Uses wildcards for window modes since the XRT auto-selects
-    w1-w4 based on count rate.
+    Check the OUTPUT directory for the cleaned Level-2 products that
+    downstream tools actually consume: the cleaned event file
+    (``*_cl.evt``) and exposure map (``*_ex.img``) for each observing
+    mode. Window modes (w1-w4) are wild-carded since the XRT
+    auto-selects them based on count rate.
+
+    The check is *mode-aware*: only the modes actually present in the
+    INPUT observation (PC and/or WT) are verified, so a PC-only or
+    WT-only observation no longer reports the absent mode as
+    ``[MISSING]``.
+
+    NB: the attitude file (``sw<OBSID>sat.fits.gz``) and housekeeping
+    files (``xrt/hk/*.hk``) are pipeline *inputs* that live in the
+    input tree, not products that xrtpipeline writes to ``output_path``.
+    The previous version globbed for them in ``output_path`` and so
+    logged a bogus ``[MISSING] attitude_file`` / ``[MISSING] hk_file``
+    on every successful run. They are dropped here: xrtpipeline aborts
+    with a non-zero exit if either input is absent, so a post-run check
+    for them was both misplaced and redundant.
     """
-    expected = {
-        'cleaned_pc_evt':  list(output_path.glob(
-            f'**/*{obs_id}xpc*po_cl.evt*')),
-        'cleaned_wt_evt':  list(output_path.glob(
-            f'**/*{obs_id}xwt*po_cl.evt*')),
-        'exposure_map_pc': list(output_path.glob(
-            f'**/*{obs_id}xpc*_ex.img*')),
-        'attitude_file':   list(output_path.glob(
-            f'**/*{obs_id}*pat.fits*')),
-        'hk_file':         list(output_path.glob(
-            f'**/*{obs_id}*xhd.hk*')),
-    }
+    # Detect which modes the observation actually contains from the
+    # raw input event files (e.g. sw<obsid>xpcw3po*.evt*,
+    # sw<obsid>xwtw2po*.evt*).
+    modes = []
+    if list(input_path.glob(f'**/sw{obs_id}xpc*.evt*')):
+        modes.append('pc')
+    if list(input_path.glob(f'**/sw{obs_id}xwt*.evt*')):
+        modes.append('wt')
+
+    expected = {}
+    for m in modes:
+        expected[f'cleaned_{m}_evt'] = list(output_path.glob(
+            f'**/*{obs_id}x{m}*po_cl.evt*'))
+        expected[f'exposure_map_{m}'] = list(output_path.glob(
+            f'**/*{obs_id}x{m}*po_ex.img*'))
+
     return {k: ([f.name for f in v] if v else None)
             for k, v in expected.items()}
 
@@ -265,7 +286,7 @@ def run_pipeline(
         return result
 
     # Verify products
-    products = verify_level2_products(output_path, obs_id)
+    products = verify_level2_products(output_path, data_path, obs_id)
     result['products'] = products
 
     if not quiet:
