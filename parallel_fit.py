@@ -22,7 +22,10 @@ import argparse
 import subprocess
 import shutil
 import tempfile
+import importlib.util
 from concurrent.futures import ProcessPoolExecutor, as_completed
+
+from swift_xrt_env import require_fit_caldb, sherpa_missing_message
 
 
 BASE_DIR = os.path.abspath(os.getcwd())
@@ -94,6 +97,12 @@ def run_fit_chunk(chunk_id, mini_tables, fit_args, base_dir, env):
         # Build command
         output_name = f'.fit_results_chunk{chunk_id:02d}.txt'
         plot_name = f'.fit_plot_chunk{chunk_id:02d}.pdf'
+
+        # A leftover from an interrupted earlier run must not be
+        # merged as if this run had produced it.
+        stale = os.path.join(base_dir, output_name)
+        if os.path.exists(stale):
+            os.remove(stale)
 
         cmd = [sys.executable,
                os.path.join(SCRIPT_DIR, 'swift_xrt_fit_spectra.py')]
@@ -233,6 +242,14 @@ def main():
                         default='flux_lightcurve.pdf')
     args = parser.parse_args()
 
+    # Workers run with this same Python and environment, so check
+    # Sherpa and the CALDB once here instead of failing in every chunk.
+    if not args.dryrun:
+        if importlib.util.find_spec('sherpa') is None:
+            print(sherpa_missing_message(), file=sys.stderr)
+            sys.exit(1)
+        require_fit_caldb(args.caldb)
+
     # Build pass-through arguments
     passthrough = ['--nh', str(args.nh), '--model', args.model,
                    '--defgamma', str(args.defgamma),
@@ -347,9 +364,13 @@ def main():
             print(f"  Chunk {cid:02d}: {status} "
                   f"[{len(results)}/{len(futures)} done]",
                   flush=True)
-            if result['returncode'] != 0 and result['stderr_tail']:
-                print(f"    {result['stderr_tail'][:200]}",
-                      flush=True)
+            if result['returncode'] != 0:
+                # Per-OBSID failures are reported on stdout,
+                # crashes on stderr.
+                for tail in (result['stdout_tail'],
+                             result['stderr_tail']):
+                    for line in tail.strip().splitlines()[-3:]:
+                        print(f"    {line}", flush=True)
 
     # Clean up mini-tables
     for _, mtabs, _ in jobs:
@@ -357,9 +378,13 @@ def main():
             if os.path.exists(mpath):
                 os.remove(mpath)
 
-    # Merge results
+    # Merge results. A chunk with one failed OBSID exits non-zero but
+    # still wrote valid results for the rest, so merge every results
+    # file that exists.
     result_files = [r['results_file'] for r in results
-                    if r['results_file'] and r['returncode'] == 0]
+                    if r['results_file'] and
+                    os.path.exists(os.path.join(BASE_DIR,
+                                                r['results_file']))]
 
     if result_files:
         n_merged = merge_results(result_files, args.output)
@@ -388,6 +413,10 @@ def main():
     n_ok = sum(1 for r in results if r['returncode'] == 0)
     n_fail = sum(1 for r in results if r['returncode'] != 0)
     print(f"\nDone. {n_ok} chunks succeeded, {n_fail} failed.")
+    if n_fail:
+        print("  Failed chunks' output is above; their successful fits "
+              "are still in the merged table.")
+        sys.exit(1)
 
 
 if __name__ == '__main__':

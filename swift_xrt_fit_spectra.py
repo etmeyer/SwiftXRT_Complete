@@ -55,13 +55,14 @@ except ImportError:
     print("ERROR: matplotlib is required.")
     sys.exit(1)
 
+from swift_xrt_env import require_fit_caldb, sherpa_missing_message
+
 # Sherpa imports — fail early if not installed
 try:
     from sherpa.astro import ui as shp
     from sherpa.utils.err import EstErr, FitErr
 except ImportError:
-    print("ERROR: sherpa is required.")
-    print("  Install via CIAO or: pip install sherpa")
+    print(sherpa_missing_message(), file=sys.stderr)
     sys.exit(1)
 
 
@@ -203,6 +204,13 @@ def _get_header_paths(pha_file, caldb_override=None):
             resolved = os.path.join(pha_dir, resolved)
         if os.path.exists(resolved):
             paths[key] = resolved
+            continue
+        # Spectra extracted by older parallel_extract.py runs record
+        # absolute paths into a since-deleted temporary chunk dir;
+        # the real file sits next to the PHA under the same name.
+        local = os.path.join(pha_dir, os.path.basename(resolved))
+        if key != 'rmf' and os.path.exists(local):
+            paths[key] = local
         else:
             print(f"    WARNING: {label} not found: {resolved}")
 
@@ -248,6 +256,14 @@ def fit_spectrum(grp_pha, nh_gal, redshift, gamma_value,
         # Resolve $CALDB in any file paths referenced by the PHA
         # header, since Sherpa cannot expand shell variables.
         resolved = _get_header_paths(grp_pha, caldb_override)
+        needed = ['rmf', 'arf'] + (['bkg'] if bkg_mode == 'subtract'
+                                   else [])
+        missing = [k for k in needed if resolved[k] is None]
+        if missing:
+            print(f"    ERROR: missing {', '.join(missing).upper()} "
+                  f"(see warning above); refusing to fit, the flux "
+                  f"would be wrong.")
+            return None
 
         # Load the grouped spectrum.
         # Sherpa will warn about $CALDB paths it can't find —
@@ -532,15 +548,20 @@ def process_one(entry, nh_gal, redshift, defgamma,
                 min_counts_fit, min_counts_gamma, emin, emax,
                 caldb_override=None, bkg_mode='subtract',
                 model_type='absorbed'):
-    """Fit one grouped spectrum. Returns results dict or None."""
+    """
+    Fit one grouped spectrum.
+
+    Returns (status, results): status is 'ok' (results dict),
+    'skipped' (too few counts; not an error) or 'failed'.
+    """
     obsid = entry['obsid']
     stem = entry['filename']
     obsid_path = os.path.join(BASE_DIR, obsid)
     grp_pha = os.path.join(obsid_path, f'{stem}_grp.pha')
 
     if not os.path.exists(grp_pha):
-        print(f"    Grouped spectrum not found: {stem}_grp.pha")
-        return None
+        print(f"    ERROR: grouped spectrum not found: {stem}_grp.pha")
+        return 'failed', None
 
     meta = get_obs_metadata(grp_pha)
     counts = meta['total_counts']
@@ -549,7 +570,7 @@ def process_one(entry, nh_gal, redshift, defgamma,
 
     if counts < min_counts_fit:
         print(f"    SKIPPED: {counts} counts < {min_counts_fit}")
-        return None
+        return 'skipped', None
 
     if counts < min_counts_gamma:
         freeze_gamma = True
@@ -568,7 +589,7 @@ def process_one(entry, nh_gal, redshift, defgamma,
 
     if fit is None:
         print(f"    FIT FAILED.")
-        return None
+        return 'failed', None
 
     # Attach metadata
     fit['obsid'] = obsid
@@ -652,7 +673,7 @@ def process_one(entry, nh_gal, redshift, defgamma,
         print(f"    χ²/dof: {fit['chi2']:.1f}/{fit['dof']} = "
               f"{fit['reduced_chi2']:.2f}")
 
-    return fit
+    return 'ok', fit
 
 
 # ---------------------------------------------------------------
@@ -964,6 +985,11 @@ def main():
         entries = entries[:args.nmax]
         print(f"  (limited to first {args.nmax})")
 
+    # Check up front that the CALDB holds the Swift responses; in a
+    # CIAO terminal $CALDB is the Chandra-only tree, and every fit
+    # would fail with "response incomplete".
+    require_fit_caldb(args.caldb)
+
     # Suppress sherpa chatter during batch processing
     import logging
     logging.getLogger('sherpa').setLevel(logging.WARNING)
@@ -971,19 +997,25 @@ def main():
     # Fit each observation
     n_total = len(entries)
     all_results = []
+    failed = []
     for i, entry in enumerate(entries, 1):
         print(f"\n  [{i}/{n_total}] [{entry['mode']}] "
               f"{entry['obsid']} / {entry['filename']}")
-        result = process_one(
+        status, result = process_one(
             entry, args.nh, args.redshift, args.defgamma,
             args.mincounts, args.mingamma, args.emin, args.emax,
             args.caldb, args.bkg, args.model)
-        if result is not None:
+        if status == 'ok':
             all_results.append(result)
+        elif status == 'failed':
+            failed.append(entry['filename'])
+
+    if failed:
+        print(f"\nFAILED ({len(failed)}): {' '.join(failed)}")
 
     if not all_results:
         print("\nNo successful fits.")
-        sys.exit(0)
+        sys.exit(1 if failed else 0)
 
     # Summary table
     output_path = os.path.join(BASE_DIR, args.output)
@@ -997,6 +1029,8 @@ def main():
     n_wt = sum(1 for r in all_results if r.get('mode') == 'WT')
     print(f"\nDone. {len(all_results)} spectra fitted successfully "
           f"({n_pc} PC, {n_wt} WT).")
+    if failed:
+        sys.exit(1)
 
 
 if __name__ == '__main__':
