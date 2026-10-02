@@ -140,7 +140,7 @@ swift_wt_summary_viewer.py --ra 187.2779 --dec 2.0524
 make_wt_master_table.py
 ```
 
-Observations under 20 seconds exposure are automatically set to `include=no`.
+Observations under 20 seconds exposure, and observations where the WT viewer did not detect the source (e.g. the target fell outside the WT window), are automatically set to `include=no`, with the reason in the comment column.
 
 **6c.** Edit the master tables. Open `pc_master_table.txt` and `wt_master_table.txt` in a text editor. Set `include` to `no` for any observations you want to exclude (bad columns through source, anomalous data, etc.). Add notes in the comment field.
 
@@ -368,6 +368,8 @@ Key options:
     --bkginner    Background annulus inner radius in pixels (default: 80)
     --bkgouter    Background annulus outer radius in pixels (default: 120)
     --expgt       Minimum exposure in seconds (default: 20)
+    --detsigma    Minimum source significance above background to
+                  count as detected (default: 3)
     --compact     Print summary table only, no plots
     --nmax        Process only first N observations
     --pdf         Output PDF filename (default: wt_profiles.pdf)
@@ -375,7 +377,8 @@ Key options:
 Output (per OBSID):
     {stem}_wt_combined.png    - sky image + DETX profile
     {stem}_wt_profile.txt     - source position, extraction parameters,
-                                BACKSCAL values
+                                BACKSCAL values, source detection
+                                (counts, sigma, source_detected)
     Collated PDF (combined pages + per-orbit grids for multi-orbit obs)
 ```
 
@@ -397,7 +400,7 @@ Output format:
     OBSID  filename  include  exp(s)  ct/s  n_gti  "comment"
 ```
 
-Observations below the exposure threshold are set to `include=no` by default. Edit the file to exclude additional observations based on your visual inspection.
+Observations below the exposure threshold, or whose `_wt_profile.txt` says the source was not detected, are set to `include=no` by default, with the reason in the comment. Run `swift_wt_summary_viewer.py` first so the detection results exist. Edit the file to exclude additional observations based on your visual inspection.
 
 ### `swift_xrt_extract_spectra.py`
 

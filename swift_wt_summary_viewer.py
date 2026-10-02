@@ -510,6 +510,24 @@ def make_orbit_grid(stem, orbits, xc, yc, src_radius,
 # Write extraction info text file
 # ---------------------------------------------------------------
 
+def source_detection(src_cts, bkg_cts, backscal_src, backscal_bkg):
+    """
+    Significance of the source above background, in sigma.
+
+    WT data are 1D, so the background expected inside the source
+    region is the annulus counts scaled by the 1D extents
+    (BACKSCAL ratio), not by 2D area. A source that never fell in the
+    WT window -- e.g. OBSID 00035017041, pointed 5' off target with
+    3C 273 outside the strip -- shows src_cts at or below that level.
+    """
+    ratio = backscal_src / backscal_bkg if backscal_bkg else 0.0
+    expected = bkg_cts * ratio
+    noise = np.sqrt(src_cts + bkg_cts * ratio**2)
+    if noise == 0:
+        return 0.0
+    return (src_cts - expected) / noise
+
+
 def write_wt_info(obsid_path, stem, info, xc, yc,
                   src_radius, bkg_inner, bkg_outer,
                   backscal_src, backscal_bkg, plate_scale):
@@ -535,7 +553,13 @@ def write_wt_info(obsid_path, stem, info, xc, yc,
         f.write(f"# These must be manually set in grppha if\n")
         f.write(f"# XSELECT's auto-values are incorrect.\n")
         f.write(f"backscal_src = {backscal_src}\n")
-        f.write(f"backscal_bkg = {backscal_bkg}\n")
+        f.write(f"backscal_bkg = {backscal_bkg}\n\n")
+        f.write(f"# Source detection (read by make_wt_master_table.py):\n")
+        f.write(f"src_counts = {info['src_counts']}\n")
+        f.write(f"bkg_counts = {info['bkg_counts']}\n")
+        f.write(f"detection_sigma = {info['detection_sigma']:.1f}\n")
+        f.write(f"source_detected = "
+                f"{'yes' if info['source_detected'] else 'no'}\n")
     return output_file
 
 
@@ -606,6 +630,10 @@ def main():
                              'pixels (default: 120)')
     parser.add_argument('--compact', action='store_true',
                         help='Print compact summary only, no plots')
+    parser.add_argument('--detsigma', type=float, default=3.0,
+                        help='Minimum significance (sigma) of the '
+                             'source above background for it to count '
+                             'as detected (default: 3)')
     parser.add_argument('--expgt', type=float, default=20.0,
                         help='Minimum exposure time in seconds '
                              '(default: 20)')
@@ -645,6 +673,7 @@ def main():
 
     all_info = []
     all_figs = []
+    not_detected = []
     n_total = len(wt_entries)
 
     for idx, entry in enumerate(wt_entries, 1):
@@ -707,6 +736,21 @@ def main():
         print(f"    Bkg counts ({args.bkginner}-{args.bkgouter}): "
               f"{bkg_cts}")
 
+        sigma = source_detection(src_cts, bkg_cts,
+                                 backscal_src, backscal_bkg)
+        info['src_counts'] = int(src_cts)
+        info['bkg_counts'] = int(bkg_cts)
+        info['detection_sigma'] = sigma
+        info['source_detected'] = sigma >= args.detsigma
+        if info['source_detected']:
+            print(f"    Detection: {sigma:.1f} sigma")
+        else:
+            print(f"    WARNING: source NOT detected ({sigma:.1f} sigma "
+                  f"< {args.detsigma}). The target is probably outside "
+                  f"the WT window; make_wt_master_table.py will set "
+                  f"include=no.")
+            not_detected.append(stem)
+
         # Write info file
         txt_file = write_wt_info(
             obsid_path, stem, info, xc, yc,
@@ -751,6 +795,12 @@ def main():
     # Print compact table
     if all_info:
         print_compact_table(all_info)
+
+    if not_detected:
+        print(f"\nSource NOT detected in {len(not_detected)} WT "
+              f"observation(s) (< {args.detsigma} sigma):")
+        for stem in not_detected:
+            print(f"    {stem}")
 
     # Collate into PDF
     if all_figs and not args.compact:

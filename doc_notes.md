@@ -108,5 +108,15 @@ on failure. Still open:
 - **xselect silently loses output for long paths.** At ~140 characters it
   printed "Wrote spectrum to ..." but no file appeared (and it crashed in
   `xsl_exit`); ~100 characters work. Documented as a gotcha only.
-- OBSID 041-style 0-count WT spectra and the King-profile low-count guard
-  (from the May bug log) are untouched.
+- ~~OBSID 041-style 0-count WT spectra~~ — FIXED on
+  `fix/wt-source-detection`. 041 was not a centroiding bug: it was pointed
+  5.1' off target with 3C 273 outside the WT window (0 events within 20 px
+  of the target; flat DETX profile), so the data genuinely contain no
+  source. `swift_wt_summary_viewer.py` now tests the source against the
+  1D-scaled background (041: -8.4 sigma; faintest real epoch-1 obs: 39.5
+  sigma), records it in `_wt_profile.txt`, and `make_wt_master_table.py`
+  sets include=no with the reason in the comment column.
+  Side note: `find_sky_position` derives the target X from RA only and Y
+  from the median of nearby events (never from Dec). It works for on-axis
+  data but is crude; a proper TAN-WCS seed would be more robust.
+- The King-profile low-count guard (from the May bug log) is untouched.
