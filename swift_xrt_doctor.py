@@ -5,7 +5,12 @@ Prints a green/red checklist of everything the pipeline assumes about the
 environment (PATH, HEASoft, CALDB, Python, packages, Sherpa, disk) so a user
 can verify readiness in one shot instead of watching the pipeline fail midway.
 
-Exit status: 0 only if no check FAILs. Stdlib only.
+The pipeline needs two terminals (see swift_xrt_env.py): a HEASoft terminal
+without CIAO for steps 2-7, and a CIAO terminal for the fit (step 8). Run the
+doctor in each; it ends by saying which steps the current terminal can run.
+
+Exit status: 0 only if no check FAILs. Stdlib only (plus the sibling
+swift_xrt_env module, itself stdlib only).
 
 Usage:
     swift_xrt_doctor.py            # full human-readable report (color on tty)
@@ -20,6 +25,8 @@ import os
 import re
 import shutil
 import sys
+
+import swift_xrt_env as xenv
 
 # Directory this script lives in; used to confirm PATH points at the pipeline.
 PIPELINE_DIR = os.path.dirname(os.path.realpath(__file__))
@@ -82,6 +89,13 @@ def check_path():
 
 def check_heasoft():
     headas = os.environ.get("HEADAS")
+    if xenv.headas_is_ciao():
+        emit(WARN, "CIAO is set up in this terminal: use it for the fit "
+             "step (Step 8) only",
+             ["CIAO's python replaced $HEADAS with %s," % headas,
+              "so xrtpipeline and extraction fail here. Run those in",
+              "a separate terminal: setup_swiftxrt; heainit (no ciao)."])
+        return
     if not headas:
         emit(FAIL, "HEASoft not loaded: $HEADAS unset. Run 'heainit'.")
         return
@@ -105,6 +119,8 @@ def check_heasoft_version():
     # spectral tools), so also try the resolved xrtpipeline path.
     candidates = [os.environ.get("HEADAS", "")]
     tool = shutil.which("xrtpipeline")
+    if xenv.headas_is_ciao() and not tool:
+        return  # CIAO-only terminal; check_heasoft already explained
     if tool:
         candidates.append(os.path.realpath(tool))
     for src in candidates:
@@ -179,6 +195,11 @@ def check_required_pkgs():
     for imp, dist in REQUIRED_PKGS:
         if _ilu.find_spec(imp) is not None:
             emit(OK, "%-12s %s" % (imp, _pkg_version(dist)))
+        elif imp == "requests":
+            # Only the download step uses it, and heainit's python
+            # (the `heasoft` conda env on amorgos) lacks it.
+            emit(WARN, "requests     not importable -- only Step 2 "
+                 "(download) needs it; run the download before `heainit`")
         else:
             emit(FAIL, "%-12s NOT IMPORTABLE (pip install %s)" % (imp, dist))
 
@@ -194,9 +215,15 @@ def check_optional_pkgs():
 def check_sherpa():
     if _ilu.find_spec("sherpa") is not None:
         emit(OK, "sherpa       %s" % _pkg_version("sherpa"))
+    elif xenv.ciao_install():
+        emit(FAIL, "sherpa not importable although CIAO is set up -- "
+             "python3 is %s, not CIAO's" % sys.executable,
+             ["Something on PATH (e.g. a conda env activated after "
+              "`ciao`) shadows CIAO's python3."])
     else:
-        emit(FAIL, "sherpa not importable -- needed for fitting. This usually "
-             "means you are outside a CIAO environment (source ciao.bash).")
+        emit(WARN, "sherpa not importable -- not needed until the fit "
+             "step (Step 8), which runs in a CIAO terminal: "
+             "setup_swiftxrt; ciao")
 
 
 def check_disk():
@@ -211,6 +238,42 @@ def check_disk():
         emit(WARN, msg + " (<10 GB; reductions may run out of space)")
     else:
         emit(OK, msg)
+
+
+def report_terminal_role():
+    """Say which pipeline steps this terminal can run (not a check)."""
+    caldb = os.environ.get("CALDB", "")
+
+    def have(mod):
+        return _ilu.find_spec(mod) is not None
+
+    heasoft_ok = (os.environ.get("HEADAS") and not xenv.headas_is_ciao()
+                  and all(shutil.which(t) for t in HEASOFT_TOOLS)
+                  and xenv.caldb_has_swift(caldb) is not False)
+    fit_caldb = None
+    if xenv.caldb_has_swift(caldb):
+        fit_caldb = "$CALDB"
+    elif xenv.caldb_has_swift(xenv.DEFAULT_HEASOFT_CALDB):
+        fit_caldb = "--caldb %s" % xenv.DEFAULT_HEASOFT_CALDB
+
+    rows = [
+        ("Step 2", "download", have("requests"),
+         "requests not importable here; run it before `heainit`"),
+        ("Steps 3, 7", "xrtpipeline, extraction", heasoft_ok,
+         "needs HEASoft without CIAO: setup_swiftxrt; heainit"),
+        ("Steps 4-6", "survey, inspection",
+         all(have(m) for m in ("astropy", "scipy", "matplotlib")),
+         "astropy/scipy/matplotlib missing"),
+        ("Step 8", "fit", have("sherpa") and fit_caldb,
+         "needs CIAO: setup_swiftxrt; ciao"),
+    ]
+    print("\nThis terminal can run:")
+    for step, what, ok, why in rows:
+        if ok and step == "Step 8":
+            verdict = "yes (CALDB: %s)" % fit_caldb
+        else:
+            verdict = "yes" if ok else "no -- " + why
+        print("  %-10s %-24s %s" % (step, what, verdict))
 
 
 CHECKS = [
@@ -246,6 +309,8 @@ def main(argv=None):
             check()
         except Exception as exc:  # a check must never crash the doctor
             emit(FAIL, "%s crashed: %s" % (check.__name__, exc))
+
+    report_terminal_role()
 
     n_ok = sum(1 for s, _, _ in _results if s == OK)
     n_warn = sum(1 for s, _, _ in _results if s == WARN)

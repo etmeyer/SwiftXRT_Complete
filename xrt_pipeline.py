@@ -46,6 +46,8 @@ from pathlib import Path
 from typing import Optional, Union, Dict, Tuple
 from concurrent.futures import ProcessPoolExecutor, as_completed
 
+from swift_xrt_env import require_heasoft_shell
+
 
 # ---------------------------------------------------------------
 # ObsID detection
@@ -652,6 +654,10 @@ def main():
                              'OBSID is marked FAILED, and the batch '
                              'continues.')
     args = parser.parse_args()
+
+    # xrtpipeline inherits our HEADAS/CALDB; refuse to start in a
+    # terminal where CIAO has replaced them (see swift_xrt_env.py).
+    require_heasoft_shell(['xrtpipeline'])
 
     kwargs = dict(
         createexpomap=args.createexpomap,

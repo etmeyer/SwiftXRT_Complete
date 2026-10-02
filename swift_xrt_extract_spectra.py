@@ -43,6 +43,8 @@ import argparse
 import shutil
 import numpy as np
 
+from swift_xrt_env import require_heasoft_shell
+
 try:
     from astropy.io import fits
 except ImportError:
@@ -65,30 +67,13 @@ BASE_DIR = os.path.abspath(os.getcwd())
 
 def check_environment():
     """
-    Verify that HEASoft and CALDB are properly configured.
-    We check for the environment variables and the availability
-    of key executables.
+    Verify that HEASoft and a Swift-capable CALDB are configured, and
+    that CIAO is not set up in this terminal (CIAO's python replaces
+    $HEADAS, which breaks every HEASoft tool we launch; see
+    swift_xrt_env.py).
     """
-    headas = os.environ.get('HEADAS')
-    caldb = os.environ.get('CALDB')
-
-    if not headas:
-        print("ERROR: HEADAS environment variable not set.")
-        print("  Source your HEASoft init script first.")
-        sys.exit(1)
-
-    if not caldb:
-        print("ERROR: CALDB environment variable not set.")
-        print("  Source your CALDB init script first.")
-        sys.exit(1)
-
-    # Check that key tools are available
-    for tool in ['xselect', 'xrtexpomap', 'xrtmkarf', 'grppha']:
-        if shutil.which(tool) is None:
-            print(f"ERROR: '{tool}' not found in PATH.")
-            print("  Make sure HEASoft is fully installed and "
-                  "initialized.")
-            sys.exit(1)
+    headas, caldb = require_heasoft_shell(
+        ['xselect', 'xrtexpomap', 'xrtmkarf', 'grppha'])
 
     print(f"HEADAS: {headas}")
     print(f"CALDB:  {caldb}")
@@ -713,8 +698,15 @@ def run_grppha(src_pha, out_pha, bkg_pha, arf_file, rmf_path,
     """
     src_abs = os.path.abspath(src_pha)
     out_abs = os.path.abspath(out_pha)
-    bkg_abs = os.path.abspath(bkg_pha)
-    arf_abs = os.path.abspath(arf_file)
+
+    # The background and ARF sit next to the grouped spectrum, so
+    # record them by bare filename: fitting tools resolve relative
+    # names from the spectrum's own directory. Absolute paths would
+    # point into parallel_extract.py's temporary chunk directory,
+    # which is deleted afterwards, and the fit would then silently
+    # run without ARF or background.
+    bkg_name = os.path.basename(bkg_pha)
+    arf_name = os.path.basename(arf_file)
 
     # Build grppha commands
     # grppha prompts: input file, output file, then GRPPHA[] commands
@@ -723,8 +715,8 @@ def run_grppha(src_pha, out_pha, bkg_pha, arf_file, rmf_path,
         f"{src_abs}\n"
         f"{out_abs}\n"
         f"bad 0-29\n"
-        f"chkey backfile {bkg_abs}\n"
-        f"chkey ancrfile {arf_abs}\n"
+        f"chkey backfile {bkg_name}\n"
+        f"chkey ancrfile {arf_name}\n"
         f"chkey respfile {rmf_path}\n"
         f"group min {min_counts}\n"
         f"exit\n"
@@ -1451,6 +1443,7 @@ def main():
 
     # --- Process PC observations ---
     summaries = []
+    failed = []
 
     if pc_entries:
         print(f"\n{'#'*65}")
@@ -1463,6 +1456,8 @@ def main():
                 args.mincounts, args.bkg_inner, args.bkg_outer)
             if result:
                 summaries.append(result)
+            else:
+                failed.append(entry['filename'])
 
     # --- Process WT observations ---
     if wt_entries:
@@ -1477,6 +1472,8 @@ def main():
                 args.wt_bkgouter)
             if result:
                 summaries.append(result)
+            else:
+                failed.append(entry['filename'])
 
     # --- Grand summary table ---
     if summaries:
@@ -1528,6 +1525,10 @@ def main():
               f"({total_exp/1000:.2f} ks)")
     else:
         print("\nNo spectra were successfully extracted.")
+
+    if failed:
+        print(f"\n  FAILED ({len(failed)}): {' '.join(failed)}")
+        sys.exit(1)
 
 
 if __name__ == '__main__':

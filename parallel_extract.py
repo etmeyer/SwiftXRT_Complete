@@ -30,8 +30,11 @@ import re
 import argparse
 import subprocess
 import tempfile
+import time
 import shutil
 from concurrent.futures import ProcessPoolExecutor, as_completed
+
+from swift_xrt_env import require_heasoft_shell
 
 
 BASE_DIR = os.path.abspath(os.getcwd())
@@ -71,6 +74,31 @@ def write_mini_table(header, entries, filepath):
             f.write(header)
         for entry in entries:
             f.write(entry)
+
+
+def table_stems(table_lines):
+    """(OBSID, filename stem) pairs from master-table entry lines."""
+    stems = []
+    for line in table_lines:
+        parts = line.split()
+        if len(parts) >= 2:
+            stems.append((parts[0], parts[1]))
+    return stems
+
+
+def find_missing_spectra(stems, base_dir, since):
+    """
+    Return the stems whose grouped spectrum was not written during
+    this run (missing, or older than `since`). A chunk can report
+    success while an OBSID inside it silently produced nothing, so
+    the outputs themselves are the ground truth.
+    """
+    missing = []
+    for obsid, stem in stems:
+        grp = os.path.join(base_dir, obsid, f'{stem}_grp.pha')
+        if not os.path.exists(grp) or os.path.getmtime(grp) < since:
+            missing.append(stem)
+    return missing
 
 
 def run_chunk(chunk_id, mini_table, script_args, base_dir, env):
@@ -186,6 +214,13 @@ def main():
 
     args = parser.parse_args()
 
+    # Fail before spawning workers if HEASoft isn't usable here
+    # (e.g. CIAO is set up in this terminal); otherwise every chunk
+    # fails the same way.
+    if not args.dryrun:
+        require_heasoft_shell(['xselect', 'xrtexpomap', 'xrtmkarf',
+                               'grppha'])
+
     # Build pass-through arguments for the extraction script
     passthrough = [
         '--ra', str(args.ra),
@@ -201,6 +236,7 @@ def main():
 
     # Read master tables and split into chunks
     jobs = []  # list of (chunk_id, mini_table_path, mode)
+    expected = []  # (OBSID, stem) of every observation we extract
 
     chunk_id = 0
 
@@ -208,6 +244,7 @@ def main():
         pc_path = os.path.join(BASE_DIR, args.pctable)
         if os.path.exists(pc_path):
             header, entries = read_master_table_raw(pc_path)
+            expected.extend(table_stems(entries))
             n_pc = len(entries)
             # Split into chunks
             n_chunks = min(args.nproc, n_pc)
@@ -235,6 +272,7 @@ def main():
         wt_path = os.path.join(BASE_DIR, args.wttable)
         if os.path.exists(wt_path):
             header, entries = read_master_table_raw(wt_path)
+            expected.extend(table_stems(entries))
             n_wt = len(entries)
             n_chunks = min(args.nproc, n_wt)
             if n_chunks > 0:
@@ -284,6 +322,9 @@ def main():
     # need HEADAS, CALDB, LD_LIBRARY_PATH, etc.
     parent_env = os.environ.copy()
 
+    # Outputs older than this were not written by this run.
+    start_time = time.time()
+
     results = []
     with ProcessPoolExecutor(max_workers=args.nproc) as executor:
         futures = {}
@@ -315,8 +356,13 @@ def main():
             print(f"  Chunk {cid:02d} [{mode.upper()}]: {status} "
                   f"[{len(results)}/{len(futures)} done]",
                   flush=True)
-            if result['returncode'] != 0 and result['stderr_tail']:
-                print(f"    {result['stderr_tail'][:200]}")
+            if result['returncode'] != 0:
+                # The extraction script reports per-OBSID errors on
+                # stdout and environment errors on stderr.
+                for tail in (result['stdout_tail'],
+                             result['stderr_tail']):
+                    for line in tail.strip().splitlines()[-3:]:
+                        print(f"    {line}")
 
     # Clean up mini-tables
     for _, mpath, _ in jobs:
@@ -327,6 +373,20 @@ def main():
     n_ok = sum(1 for r in results if r['returncode'] == 0)
     n_fail = sum(1 for r in results if r['returncode'] != 0)
     print(f"\nDone. {n_ok} chunks succeeded, {n_fail} failed.")
+
+    missing = find_missing_spectra(expected, BASE_DIR, start_time)
+    if missing:
+        print(f"\nERROR: {len(missing)} of {len(expected)} observations "
+              f"have no new _grp.pha:")
+        for stem in missing:
+            print(f"    {stem}")
+        print("  Re-run them (e.g. swift_xrt_extract_spectra.py with a "
+              "master table listing only these) and check the output.")
+    else:
+        print(f"All {len(expected)} grouped spectra written.")
+
+    if n_fail or missing:
+        sys.exit(1)
 
     if n_fail > 0:
         print("Failed chunks:")

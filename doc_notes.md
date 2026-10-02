@@ -75,3 +75,29 @@ xrtpipeline's parser. New out-of-scope finding:
   archive on every run and isn't reproducible-clean. Left as-is in 1.2.3.fix
   (out of the four-issue scope; changing cwd needs its own validation). A future
   hardening could run each OBSID from a private scratch cwd.
+
+Logged during **two-terminal env fix** (`fix/two-shell-env`, prompted by a
+user report of "step 5" errors blamed on the environment not finding Sherpa).
+Diagnosis: no single terminal could run the documented pipeline. In a CIAO
+terminal, CIAO's `python3` wrapper resets `$HEADAS`/`$CALDB` inside every
+script, so extraction (and xrtpipeline) fail; without CIAO there is no Sherpa.
+`docs/01-setup.md`'s "a single CIAO shell can run the entire pipeline" was
+wrong. Fixed on that branch: docs rewritten around two terminals; scripts
+refuse to start in the wrong terminal with an explanation; doctor lists what
+the current terminal can run; README renumbered to the docs/ step numbers (the
+"Workflow Step 5" forward-reference item above is resolved by this); Bug A
+(dead ARF/BACKFILE paths → ~100× fluxes) fixed; extraction/fit exit non-zero
+on failure. Still open:
+
+- **Bug B race itself is not fixed**, only surfaced: `parallel_extract.py` now
+  checks that every included OBSID got a fresh `_grp.pha` and exits non-zero
+  listing the misses, but the underlying intermittent drop is undiagnosed.
+- **`requests` is missing from the `heasoft` conda env** that `heainit`
+  activates, so the download must run before `heainit`. Installing it into
+  that env (`conda install -n heasoft requests`) would remove the wrinkle —
+  a change to a shared env, left for the admin.
+- **xselect silently loses output for long paths.** At ~140 characters it
+  printed "Wrote spectrum to ..." but no file appeared (and it crashed in
+  `xsl_exit`); ~100 characters work. Documented as a gotcha only.
+- OBSID 041-style 0-count WT spectra and the King-profile low-count guard
+  (from the May bug log) are untouched.
