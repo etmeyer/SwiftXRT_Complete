@@ -93,8 +93,8 @@ def check_heasoft():
         emit(WARN, "CIAO is set up in this terminal: use it for the fit "
              "step (Step 8) only",
              ["CIAO's python replaced $HEADAS with %s," % headas,
-              "so download/xrtpipeline/extraction fail here. Run those",
-              "in a separate terminal: setup_swiftxrt; heainit (no ciao)."])
+              "so xrtpipeline and extraction fail here. Run those in",
+              "a separate terminal: setup_swiftxrt; heainit (no ciao)."])
         return
     if not headas:
         emit(FAIL, "HEASoft not loaded: $HEADAS unset. Run 'heainit'.")
