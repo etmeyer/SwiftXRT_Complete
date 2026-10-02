@@ -8,9 +8,9 @@ event files, housekeeping, and auxiliary products that [Step 3 —
 xrtpipeline](03-xrtpipeline.md) needs. This is the first step that produces data
 on disk.
 
-Run it in the **HEASoft terminal**, after `setup_swiftxrt` and **before**
-`heainit` (see [Gotchas](#gotchas) and
-[Step 1 — Two terminals](01-setup.md#two-terminals)).
+Run it in the **HEASoft terminal** (`setup_swiftxrt; heainit`); it also works
+in the CIAO terminal, since it needs no HEASoft. See
+[Step 1 — Two terminals](01-setup.md#two-terminals).
 
 ## What runs
 
@@ -175,15 +175,7 @@ An OBSID file is plain text, one ID per line; blank lines and `#` comments
      S --> M["You decide include/exclude in the master tables"]
    ```
 
-2. **Run the download before `heainit`.** This step needs no HEASoft, but
-   `heainit` switches `python3` to the `heasoft` conda env, which has no
-   `requests` (`ModuleNotFoundError: No module named 'requests'`). In the
-   HEASoft terminal, run `setup_swiftxrt`, then the download, then
-   `heainit` for Step 3 — see
-   [Step 1 — Two terminals](01-setup.md#two-terminals). The download also
-   works in the CIAO terminal.
-
-3. **MJD vs ISO dates.** Internal time on `swiftmastr` is an MJD float. The
+2. **MJD vs ISO dates.** Internal time on `swiftmastr` is an MJD float. The
    date filter does the MJD↔calendar conversion for you — always pass
    `YYYY-MM-DD`. Remember `--end-date` is exclusive (strictly before), while
    `--start-date` is inclusive.

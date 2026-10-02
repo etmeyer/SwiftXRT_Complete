@@ -196,10 +196,10 @@ def check_required_pkgs():
         if _ilu.find_spec(imp) is not None:
             emit(OK, "%-12s %s" % (imp, _pkg_version(dist)))
         elif imp == "requests":
-            # Only the download step uses it, and heainit's python
-            # (the `heasoft` conda env on amorgos) lacks it.
+            # Only the download step uses it.
             emit(WARN, "requests     not importable -- only Step 2 "
-                 "(download) needs it; run the download before `heainit`")
+                 "(download) needs it; install it into this Python or "
+                 "download from another terminal")
         else:
             emit(FAIL, "%-12s NOT IMPORTABLE (pip install %s)" % (imp, dist))
 
@@ -258,7 +258,7 @@ def report_terminal_role():
 
     rows = [
         ("Step 2", "download", have("requests"),
-         "requests not importable here; run it before `heainit`"),
+         "requests not importable here"),
         ("Steps 3, 7", "xrtpipeline, extraction", heasoft_ok,
          "needs HEASoft without CIAO: setup_swiftxrt; heainit"),
         ("Steps 4-6", "survey, inspection",

@@ -12,7 +12,7 @@ For a one-source quick-start example, see the [README](../README.md).
 | Step | Doc | Scripts | Terminal | What it does |
 | ---- | --- | ------- | -------- | ------------ |
 | 1 | [Setup](01-setup.md) | (env + `swift_xrt_doctor.py`) | both | Install the pipeline and verify each terminal |
-| 2 | [Download data](02-download.md) | `swift_xrt_download.py` | HEASoft, before `heainit` | List, filter, and download Swift XRT observations |
+| 2 | [Download data](02-download.md) | `swift_xrt_download.py` | either | List, filter, and download Swift XRT observations |
 | 3 | [Run xrtpipeline](03-xrtpipeline.md) | `xrt_pipeline.py` | HEASoft | Produce cleaned level-2 event files |
 | 4 | [Survey observations](04-survey.md) | `swift_xrt_summary.py` | either | Per-OBSID summary of modes, exposures, orbits |
 | 5 | [PC-mode inspection](05-pc-inspection.md) | `swift_xrt_king_profile.py`, `swift_pc_source_viewer.py`, PC master table | either | Pile-up + source images + PC master selection table |
@@ -20,8 +20,8 @@ For a one-source quick-start example, see the [README](../README.md).
 | 7 | [Extract spectra](07-extract.md) | `parallel_extract.py` (or `swift_xrt_extract_spectra.py`) | HEASoft | Per-OBSID source/background extraction + grouping |
 | 8 | [Fit and plot](08-fit-and-plot.md) | `parallel_fit.py` (or `swift_xrt_fit_spectra.py`), `plot_lightcurve.py` | CIAO, with `--caldb` | Spectral fits + νFν light curve |
 
-**Two terminals.** Steps 2–7 run in a HEASoft terminal (`setup_swiftxrt`,
-download, then `heainit`; never `ciao`), and Step 8 in a CIAO terminal
+**Two terminals.** Steps 2–7 run in a HEASoft terminal
+(`setup_swiftxrt; heainit`; never `ciao`), and Step 8 in a CIAO terminal
 (`setup_swiftxrt; ciao`). Why, and what goes wrong otherwise:
 [Step 1 — Two terminals](01-setup.md#two-terminals).
 

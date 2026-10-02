@@ -92,10 +92,14 @@ on failure. Still open:
 - **Bug B race itself is not fixed**, only surfaced: `parallel_extract.py` now
   checks that every included OBSID got a fresh `_grp.pha` and exits non-zero
   listing the misses, but the underlying intermittent drop is undiagnosed.
-- **`requests` is missing from the `heasoft` conda env** that `heainit`
-  activates, so the download must run before `heainit`. Installing it into
-  that env (`conda install -n heasoft requests`) would remove the wrinkle —
-  a change to a shared env, left for the admin.
+- ~~`requests` missing from the `heasoft` conda env~~ — installed
+  2026-10-02 (`requests` + `charset-normalizer` only, with openssl/certifi/
+  ca-certificates pinned to their existing versions); the "download before
+  `heainit`" workaround was removed from the docs.
+- **`swift_xrt_download.py --obsid X --list-only` downloads anyway.**
+  `--list-only` is ignored with `--obsid` (26 files landed in
+  `./swift_xrt_data`). Docs say `--obsid` skips the catalog query, but
+  `--list-only` should still mean "don't download".
 - **xselect silently loses output for long paths.** At ~140 characters it
   printed "Wrote spectrum to ..." but no file appeared (and it crashed in
   `xsl_exit`); ~100 characters work. Documented as a gotcha only.

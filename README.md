@@ -20,11 +20,10 @@ CIAO breaks the HEASoft tools and Sherpa only exists in CIAO. See
 
 ```bash
 # Terminal 1 (HEASoft) -- never run `ciao` here
-setup_swiftxrt
+setup_swiftxrt; heainit
 swift_xrt_download.py --name "3C 273" \
     --start-date 2008-08-04 --end-date 2011-07-06 \
-    --outdir XRT_input                       # Step 2, before heainit
-heainit
+    --outdir XRT_input                       # Step 2
 # Steps 3-7: see docs/index.md
 
 # Terminal 2 (CIAO) -- Step 8 only
@@ -49,7 +48,7 @@ each stage. Step numbers match [docs/](docs/index.md).
 ```
 Step  What                         Script                        Terminal
 1     Setup                        swift_xrt_doctor.py           both
-2     Download                     swift_xrt_download.py         HEASoft (before heainit)
+2     Download                     swift_xrt_download.py         either
 3     Run xrtpipeline              xrt_pipeline.py               HEASoft
 4     Survey observations          swift_xrt_summary.py          either
 5     PC-mode inspection
