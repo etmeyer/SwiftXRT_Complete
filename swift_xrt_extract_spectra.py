@@ -41,6 +41,8 @@ import glob
 import subprocess
 import argparse
 import shutil
+import atexit
+import tempfile
 import numpy as np
 
 from swift_xrt_env import require_heasoft_shell
@@ -77,7 +79,27 @@ def check_environment():
 
     print(f"HEADAS: {headas}")
     print(f"CALDB:  {caldb}")
+    use_private_pfiles(headas)
     return caldb
+
+
+def use_private_pfiles(headas):
+    """
+    Point PFILES at a fresh private directory for this run.
+
+    xselect, xrtmkarf and grppha rewrite their .par files under the
+    first PFILES entry, by default the shared $HOME/pfiles. When
+    parallel_extract.py runs 16 copies of this script at once, one
+    xselect occasionally reads extractor.par while another is
+    rewriting it ("Can't stat user parameter file .../extractor.par",
+    "Error in extractor") and that OBSID silently gets no spectrum.
+    A private directory in front of $HEADAS/syspfiles gives each run
+    its own pristine copies (also immune to CIAO-polluted ~/pfiles,
+    as in xrt_pipeline.py). Every tool we launch inherits os.environ.
+    """
+    pfiles_dir = tempfile.mkdtemp(prefix='xrt_extract_pf_')
+    atexit.register(shutil.rmtree, pfiles_dir, ignore_errors=True)
+    os.environ['PFILES'] = f"{pfiles_dir};{headas}/syspfiles"
 
 
 # ---------------------------------------------------------------

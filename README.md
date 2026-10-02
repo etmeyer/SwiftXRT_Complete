@@ -554,6 +554,9 @@ Key options:
 All other arguments (--rout, --mincounts, --bkg-inner, etc.) are
 passed through to swift_xrt_extract_spectra.py.
 
+Full per-chunk logs: parallel_extract_logs/chunkNN_<mode>.log
+(the console shows only a short tail for failed chunks).
+
 Example:
     parallel_extract.py --ra 187.2779 --dec 2.0524 --nproc 16
     parallel_extract.py --ra 187.2779 --dec 2.0524 --nproc 32 --mode pc --dryrun

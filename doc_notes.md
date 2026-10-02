@@ -89,9 +89,14 @@ the current terminal can run; README renumbered to the docs/ step numbers (the
 (dead ARF/BACKFILE paths → ~100× fluxes) fixed; extraction/fit exit non-zero
 on failure. Still open:
 
-- **Bug B race itself is not fixed**, only surfaced: `parallel_extract.py` now
-  checks that every included OBSID got a fresh `_grp.pha` and exits non-zero
-  listing the misses, but the underlying intermittent drop is undiagnosed.
+- ~~Bug B race~~ — FIXED on `fix/bugb-parallel-extract`. Cause: all
+  parallel workers shared `$HOME/pfiles`; an xselect occasionally read
+  `extractor.par` while another rewrote it (`Can't stat user parameter file
+  .../extractor.par`, `Error in extractor`) and that OBSID got no spectrum.
+  Each extraction run now uses a private PFILES dir (as xrt_pipeline.py
+  does). Reproduced 4/7 runs dropping an OBSID at `--nproc 16` on the
+  88-spectrum epoch-1 set; 0/8 after the fix. Full chunk logs now kept in
+  `parallel_extract_logs/`.
 - ~~`requests` missing from the `heasoft` conda env~~ — installed
   2026-10-02 (`requests` + `charset-normalizer` only, with openssl/certifi/
   ca-certificates pinned to their existing versions); the "download before

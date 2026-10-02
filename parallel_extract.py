@@ -101,7 +101,8 @@ def find_missing_spectra(stems, base_dir, since):
     return missing
 
 
-def run_chunk(chunk_id, mini_table, script_args, base_dir, env):
+def run_chunk(chunk_id, mini_table, script_args, base_dir, env,
+              log_file):
     """
     Run the extraction script on a chunk in a temporary
     working directory.
@@ -113,6 +114,9 @@ def run_chunk(chunk_id, mini_table, script_args, base_dir, env):
     env is the parent process's os.environ, passed explicitly
     to ensure HEASoft/CALDB environment variables propagate
     correctly through ProcessPoolExecutor workers.
+
+    The chunk's full stdout/stderr is written to log_file, since the
+    per-OBSID error messages are needed to diagnose a failure.
     """
     # Create a temporary working directory
     tmp_dir = tempfile.mkdtemp(
@@ -165,6 +169,12 @@ def run_chunk(chunk_id, mini_table, script_args, base_dir, env):
 
         # Since we symlinked OBSID dirs, outputs are written
         # directly into the real directories.
+
+        with open(log_file, 'w') as f:
+            f.write(' '.join(cmd) + '\n\n')
+            f.write(result.stdout or '')
+            if result.stderr:
+                f.write('\n--- stderr ---\n' + result.stderr)
 
         return {
             'chunk_id': chunk_id,
@@ -325,6 +335,13 @@ def main():
     # Outputs older than this were not written by this run.
     start_time = time.time()
 
+    # Full per-chunk logs; the console only shows a short tail.
+    log_dir = os.path.join(BASE_DIR, 'parallel_extract_logs')
+    os.makedirs(log_dir, exist_ok=True)
+    for old in os.listdir(log_dir):
+        if old.startswith('chunk') and old.endswith('.log'):
+            os.remove(os.path.join(log_dir, old))
+
     results = []
     with ProcessPoolExecutor(max_workers=args.nproc) as executor:
         futures = {}
@@ -340,9 +357,11 @@ def main():
                     '--wttable', os.path.basename(mpath),
                     '--mode', 'wt'])
 
+            log_file = os.path.join(log_dir,
+                                    f'chunk{cid:02d}_{mode}.log')
             future = executor.submit(
                 run_chunk, cid, mpath, chunk_args, BASE_DIR,
-                parent_env)
+                parent_env, log_file)
             futures[future] = (cid, mode)
 
         print(f"  All {len(futures)} workers submitted. "
@@ -363,6 +382,8 @@ def main():
                              result['stderr_tail']):
                     for line in tail.strip().splitlines()[-3:]:
                         print(f"    {line}")
+                print(f"    full log: parallel_extract_logs/"
+                      f"chunk{cid:02d}_{mode}.log")
 
     # Clean up mini-tables
     for _, mpath, _ in jobs:
