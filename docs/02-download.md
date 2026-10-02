@@ -19,7 +19,9 @@ in the CIAO terminal, since it needs no HEASoft. See
 - **Listing mode** (`--list-only`): resolves a source name or coordinates to a
   12′ cone search on HEASARC's `swiftmastr` (Swift Master Catalog), applies any
   date filter, and prints a table of matching observations to stdout. Nothing is
-  downloaded. Use it to preview before committing to a download.
+  downloaded. Use it to preview before committing to a download. With
+  `--obsid` / `--obsid-file` there is no catalog table, so it just echoes the
+  OBSIDs that would be downloaded.
 - **Download mode**: runs the same query and then actually fetches the products
   into `--outdir`. Alternatively, with `--obsid` or `--obsid-file` the catalog
   query is skipped entirely and the named OBSID(s) are pulled directly.
@@ -60,9 +62,9 @@ flowchart LR
   C["--obsid / --obsid-file"] --> D[Skip query]
   Q --> F["Apply --start-date / --end-date filter"]
   F --> O{"--list-only?"}
-  D --> G["Fetch products: event, hk, auxil"]
-  O -- yes --> P[Print table to stdout]
-  O -- no --> G
+  D --> O
+  O -- yes --> P[Print table / OBSID list to stdout]
+  O -- no --> G["Fetch products: event, hk, auxil"]
   G --> X["XRT_input/&lt;OBSID&gt;/"]
 ```
 
