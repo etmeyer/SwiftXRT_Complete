@@ -1,27 +1,29 @@
 # Step 1 — Setup
 
-Summary: Here you will find instructions on installing the pipeline scripts, making the two external analysis environments
-(HEASoft and CIAO) available/correct, and how to verify the whole thing with
-`swift_xrt_doctor.py`. This is necessary for later steps as the
-download and reduction steps shell out to HEASoft FTOOLS, and the fit step
-runs inside CIAO's bundled Python (the only supported home for Sherpa). Assuming the doctor script returns a green light you should be good to go for all future steps. 
+Summary: Here you will find instructions on installing the pipeline scripts,
+making the two external analysis environments (HEASoft and CIAO) available, and
+verifying them with `swift_xrt_doctor.py`. The pipeline runs in **two
+terminals**: a HEASoft terminal for download, reduction, inspection and
+extraction, and a CIAO terminal for the fit, because Sherpa (the fitting
+engine) lives only in CIAO's Python, and CIAO breaks the HEASoft tools. Read
+[Two terminals](#two-terminals) before you start.
 
 ## What runs
 
 ### Requirements
 
 The pipeline shells out to **two** separate analysis environments — HEASoft
-and CIAO — so both need to be available before you start. `swift_xrt_doctor.py`
-(see [How it works](#how-it-works)) verifies all of this in one shot.
+and CIAO — so both need to be installed before you start. `swift_xrt_doctor.py`
+(see [How it works](#how-it-works)) checks each terminal.
 
 **Operating environment:**
 - Python 3.9+
-- [HEASoft](https://heasarc.gsfc.nasa.gov/lheasoft/) (tested with 6.36) — provides `xrtpipeline`, `xrtmkarf`, `grppha`, `xselect`, `ftlist`, used by the download, reduction, and extraction steps.
+- [HEASoft](https://heasarc.gsfc.nasa.gov/lheasoft/) (tested with 6.36) — provides `xrtpipeline`, `xrtmkarf`, `grppha`, `xselect`, `ftlist`, used by the reduction and extraction steps.
 - [CIAO](https://cxc.cfa.harvard.edu/ciao/) (tested with 4.16) — used **only** for [Sherpa](https://sherpa.readthedocs.io/), the fitting engine in [Step 8](08-fit-and-plot.md). CIAO's bundled Python is the only supported home for Sherpa.
 
 **CALDB:**
 - [HEASoft Swift CALDB](https://heasarc.gsfc.nasa.gov/docs/heasarc/caldb/) — the calibration tree containing the Swift XRT response files at `data/swift/xrt/cpf/rmf`.
-- Sourcing CIAO repoints `$CALDB` at *its* Chandra calibration tree. If you run the fit step from a CIAO shell, you'll need `--caldb /path/to/heasoft/caldb` so the Swift RMFs can be found; see the [`$CALDB` and CIAO](#gotchas) gotcha below.
+- Setting up CIAO repoints `$CALDB` at *its* Chandra calibration tree, which has no Swift files. The fit step therefore takes `--caldb /path/to/heasoft/caldb`; see [Gotchas](#gotchas).
 
 **Python packages:**
 - `astropy`
@@ -31,18 +33,13 @@ and CIAO — so both need to be available before you start. `swift_xrt_doctor.py
 - `requests` (for data download only)
 - `astroquery` (optional, fallback name resolver)
 
-`scipy` must be importable from **whichever Python ends up running the
-King-profile step ([Step 5](05-pc-inspection.md)) and the fit step
-([Step 8](08-fit-and-plot.md))**. Because the fit step needs Sherpa, and Sherpa
-lives only in CIAO's bundled Python, the recommended route is to let that one
-Python run both — which means installing scipy into the CIAO environment once
-with `conda install -p /opt/ciao/ciao-4.16 scipy` (see below). A single CIAO
-shell can then run the entire pipeline.
+Each terminal runs the scripts with whatever `python3` comes first on its
+`PATH`, so these packages must be importable there. On amorgos the HEASoft
+terminal's Python (the `heasoft` conda env) has everything except `requests`
+and Sherpa, and CIAO's Python has everything including Sherpa.
 
 > Sherpa can also be obtained via `pip install sherpa` into a standalone
-> environment, but that is not the tested/recommended route here — CIAO is. If
-> you go the pip route, you are responsible for making `scipy` and the other
-> packages importable in that same environment.
+> environment, but that is not the tested route here — CIAO is.
 
 **Data:** Swift XRT observations downloaded from the HEASARC archive (see
 [Step 2 — Download data](02-download.md)), organized as OBSID subdirectories.
@@ -61,13 +58,15 @@ sudo chmod +x /opt/swift-xrt-pipeline/*.py
 
 ### Shell setup
 
-On a shared machine, put the environment setup in `/etc/bash.bashrc.local` so
-every user picks it up, rather than in a single user's `~/.bashrc`. The block
-below defines `setup_swiftxrt` (which manages only the pipeline's own `PATH`)
-and sources HEASoft and the HEASoft Swift CALDB:
+On a shared machine, define the setup commands in `/etc/bash.bashrc.local` so
+every user gets them. On amorgos that file defines three commands, which you
+**run yourself** in each new terminal — nothing is set up automatically at
+login:
 
 ```bash
-# /etc/bash.bashrc.local — Swift XRT pipeline site-wide setup
+# /etc/bash.bashrc.local (excerpt, amorgos)
+
+# Puts the pipeline scripts on PATH. Touches nothing else.
 setup_swiftxrt() {
     local pipedir="/opt/swift-xrt-pipeline"
     case ":$PATH:" in *":$pipedir:"*) ;; *) export PATH="$pipedir:$PATH" ;; esac
@@ -75,68 +74,101 @@ setup_swiftxrt() {
         echo "Swift XRT Pipeline ready ($(ls $pipedir/*.py 2>/dev/null | wc -l) scripts in $pipedir)"
 }
 
-# HEASoft (adjust path / version to your install)
-export HEADAS=/opt/heasoft/heasoft-6.36/x86_64-pc-linux-gnu-libc2.39
-source $HEADAS/headas-init.sh
+# HEASoft + the HEASoft (Swift) CALDB.
+heainit() {
+    conda activate heasoft
+    export HEADAS=/opt/heasoft/heasoft-6.36/x86_64-pc-linux-gnu-libc2.39
+    . $HEADAS/headas-init.sh
+    source /opt/CALDB/software/tools/caldbinit.sh
+}
 
-# Swift CALDB (HEASoft side, NOT CIAO's)
-source /opt/CALDB/software/tools/caldbinit.sh
-
-# Pipeline on PATH
-setup_swiftxrt
-
-# CIAO is intentionally NOT sourced here — users source it when they need
-# Sherpa (the fit step), e.g. by running `ciao` (alias to /opt/ciao/.../bin/ciao.sh).
+# CIAO (Sherpa).
+alias ciao='source /opt/ciao/ciao-4.16/bin/ciao.sh'
 ```
 
-`setup_swiftxrt` only puts the pipeline scripts on `PATH` — it does **not**
-touch HEASoft, CIAO, or CALDB. Those are the separate `source` lines above,
-sourced by the user or admin.
+These only exist in interactive terminals (`/etc/bash.bashrc` skips the file
+otherwise), so a shell script that calls `heainit` or `ciao` must set up the
+environment itself, e.g. by sourcing `headas-init.sh` / `ciao.sh` directly.
+
+### Two terminals
+
+| Terminal | Set up with | Runs |
+| -------- | ----------- | ---- |
+| **HEASoft** | `setup_swiftxrt`, then [Step 2](02-download.md), then `heainit` | Steps 2–7: download, xrtpipeline, survey, inspection, extraction |
+| **CIAO** | `setup_swiftxrt; ciao` | Step 8: fit, with `--caldb /opt/CALDB` |
+
+```bash
+# Terminal 1 — HEASoft. Never run `ciao` in this terminal.
+setup_swiftxrt
+swift_xrt_download.py ...      # Step 2, before heainit (see below)
+heainit
+xrt_pipeline.py ...            # Steps 3-7
+...
+
+# Terminal 2 — CIAO, for the fit only.
+setup_swiftxrt
+ciao
+swift_xrt_fit_spectra.py ... --caldb /opt/CALDB     # Step 8
+```
+
+Why two:
+
+- **CIAO breaks the HEASoft tools.** Once you run `ciao`, `python3` is CIAO's
+  wrapper script, which resets `$HEADAS` to CIAO's own `spectral` directory
+  and `$CALDB` to the Chandra CALDB *inside every pipeline script*. Every
+  HEASoft tool the script launches then fails, e.g.
+  `Failed to open /opt/ciao/ciao-4.16/spectral/bin//xselect.mdb`. Running
+  `heainit` again does not undo it; open a new terminal.
+- **Without CIAO there is no Sherpa.** In the HEASoft terminal the fit step
+  stops with `ERROR: sherpa is not importable from this Python`.
+- **The download runs before `heainit`.** `heainit` switches `python3` to the
+  `heasoft` conda env, which has no `requests`. The download needs no HEASoft,
+  so run it right after `setup_swiftxrt`. (Steps 4–6 are plain Python and
+  also work in the CIAO terminal.)
+
+The scripts check this themselves: the HEASoft steps refuse to start in a CIAO
+terminal, and the fit refuses to start without Sherpa or without Swift
+responses in its CALDB, each saying which terminal to use.
 
 ### One-time scipy into CIAO
 
-The recommended Python for the pipeline is CIAO's bundled one, because that is
-where Sherpa lives. CIAO does not ship `scipy`, which the King-profile step
-([Step 5](05-pc-inspection.md)) and a few other utilities need, so install it
-into the CIAO environment once:
+CIAO does not ship `scipy`, which the inspection steps (4–6) need. It is only
+required if you want to run those steps from the CIAO terminal, but it is
+cheap; on amorgos it is already done:
 
 ```bash
-# Make CIAO's bundled python ship scipy too (one-time)
 conda install -p /opt/ciao/ciao-4.16 scipy
 # (substitute the prefix path for your CIAO install location)
 ```
-
-With this done, a single CIAO shell has HEASoft (via the shell setup), Sherpa
-(via CIAO), and scipy — enough to run the entire pipeline end to end without
-juggling two shells.
 
 ## How it works
 
 ### Verify with the doctor
 
-`swift_xrt_doctor.py` runs a green/yellow/red checklist over everything the
-pipeline assumes about the environment and exits non-zero if anything fails:
+`swift_xrt_doctor.py` runs a checklist over everything the pipeline assumes
+about the current terminal, then lists which steps that terminal can run. Run
+it once in each terminal:
 
 ```bash
 swift_xrt_doctor.py             # full output, colored if on a terminal
 swift_xrt_doctor.py --quiet     # only failures printed
 swift_xrt_doctor.py --no-color  # plain output for logs
-# Exit code 0 only if every check passes — usable in CI / cron preambles.
+# Exit code 0 only if no check FAILs -- usable in CI / cron preambles.
 ```
 
 It checks that:
 
 - the pipeline scripts are on `PATH` (`setup_swiftxrt`),
-- HEASoft is loaded (`$HEADAS` set) and the FTOOLS resolve,
+- HEASoft is loaded (`$HEADAS` set) and the FTOOLS resolve — or reports that
+  CIAO is set up and this is a fit-only terminal,
 - the CALDB environment variables are set (and warns if `$CALDB` points at CIAO's),
 - the Swift XRT response files are present under `$CALDB`,
-- Sherpa is importable,
-- the required Python packages are importable,
+- the Python packages are importable (and Sherpa, for the fit),
 - there is free disk at `/opt`.
 
-After completing the install, shell setup, and scipy step, a healthy run from a
-CIAO shell with the HEASoft CALDB in front looks like this (the lone `[WARN]`
-is the optional `astroquery` resolver):
+A healthy **HEASoft terminal** (`setup_swiftxrt; heainit`) on amorgos. The
+warnings are expected: `requests` is why the download runs before `heainit`,
+and Sherpa belongs to the CIAO terminal.
 
 ```
 [OK] Pipeline on PATH: swift_xrt_summary.py -> /opt/swift-xrt-pipeline/swift_xrt_summary.py
@@ -149,34 +181,36 @@ is the optional `astroquery` resolver):
 [OK] HEASoft version 6.36
 [OK] CALDB configured
        $CALDB=/opt/CALDB
-       $CALDBCONFIG=/opt/ciao/ciao-4.16/CALDB/software/tools/caldb.config
+       $CALDBCONFIG=/opt/CALDB/software/tools/caldb.config
 [OK] Swift XRT response files present under $CALDB
-[OK] Python 3.11.6 (/opt/ciao/ciao-4.16/binexe/python3.11)
+[OK] Python 3.12.13 (/opt/anaconda3/envs/heasoft/bin/python3)
 [OK] astropy      7.2.0
-[OK] numpy        1.26.2
-[OK] scipy        1.17.1
-[OK] matplotlib   3.8.2
-[OK] requests     2.31.0
+[OK] numpy        2.4.2
+[OK] scipy        1.15.2
+[OK] matplotlib   3.10.8
+[WARN] requests     not importable -- only Step 2 (download) needs it; run the download before `heainit`
 [WARN] astroquery not installed (optional; download script falls back to SIMBAD/NED/Sesame)
-[OK] sherpa       4.16.0
-[OK] Disk free at /opt: 26.5 GB
+[WARN] sherpa not importable -- not needed until the fit step (Step 8), which runs in a CIAO terminal: setup_swiftxrt; ciao
+[OK] Disk free at /opt: 14.8 GB
 
-14 checks: 13 ok, 1 warn, 0 fail
+This terminal can run:
+  Step 2     download                 no -- requests not importable here; run it before `heainit`
+  Steps 3, 7 xrtpipeline, extraction  yes
+  Steps 4-6  survey, inspection       yes
+  Step 8     fit                      no -- needs CIAO: setup_swiftxrt; ciao
+
+14 checks: 11 ok, 3 warn, 0 fail
 ```
 
-The single most useful diagnostic is the **yellow** CALDB clash: you're in a
-CIAO shell and `$CALDB` is still pointing at CIAO's Chandra tree instead of
-HEASoft's Swift CALDB:
+A healthy **CIAO terminal** (`setup_swiftxrt; ciao`). The CALDB warnings are
+why the fit takes `--caldb /opt/CALDB`:
 
 ```
 [OK] Pipeline on PATH: swift_xrt_summary.py -> /opt/swift-xrt-pipeline/swift_xrt_summary.py
-[OK] HEASoft loaded ($HEADAS set, all FTOOLS on PATH)
-       xrtpipeline  /opt/heasoft/heasoft-6.36/x86_64-pc-linux-gnu-libc2.39/bin/xrtpipeline
-       xrtmkarf     /opt/heasoft/heasoft-6.36/x86_64-pc-linux-gnu-libc2.39/bin/xrtmkarf
-       grppha       /opt/heasoft/heasoft-6.36/x86_64-pc-linux-gnu-libc2.39/bin/grppha
-       xselect      /opt/heasoft/heasoft-6.36/x86_64-pc-linux-gnu-libc2.39/bin/xselect
-       ftlist       /opt/heasoft/heasoft-6.36/x86_64-pc-linux-gnu-libc2.39/bin/ftlist
-[OK] HEASoft version 6.36
+[WARN] CIAO is set up in this terminal: use it for the fit step (Step 8) only
+       CIAO's python replaced $HEADAS with /opt/ciao/ciao-4.16/spectral,
+       so xrtpipeline and extraction fail here. Run those in
+       a separate terminal: setup_swiftxrt; heainit (no ciao).
 [WARN] $CALDB points inside a CIAO install (/opt/ciao/ciao-4.16/CALDB)
        This is the Chandra CALDB, not HEASoft's Swift CALDB.
        Pass --caldb /opt/CALDB to parallel_fit.py / swift_xrt_fit_spectra.py.
@@ -190,14 +224,18 @@ HEASoft's Swift CALDB:
 [OK] requests     2.31.0
 [WARN] astroquery not installed (optional; download script falls back to SIMBAD/NED/Sesame)
 [OK] sherpa       4.16.0
-[OK] Disk free at /opt: 26.5 GB
+[OK] Disk free at /opt: 14.8 GB
 
-14 checks: 11 ok, 3 warn, 0 fail
+This terminal can run:
+  Step 2     download                 yes
+  Steps 3, 7 xrtpipeline, extraction  no -- needs HEASoft without CIAO: setup_swiftxrt; heainit
+  Steps 4-6  survey, inspection       yes
+  Step 8     fit                      yes (CALDB: --caldb /opt/CALDB)
+
+13 checks: 9 ok, 4 warn, 0 fail
 ```
 
-In that case, pass `--caldb /opt/CALDB` to the fit step (or re-source the
-HEASoft CALDB ahead of CIAO's). If you see any `[FAIL]` lines, the doctor
-prints exactly what to run to fix each one.
+If you see any `[FAIL]` lines, the doctor prints what to run to fix each one.
 
 ## Inputs and outputs
 
@@ -205,11 +243,11 @@ prints exactly what to run to fix each one.
 the external installs you point it at: the HEASoft tree (`$HEADAS`), the
 HEASoft Swift CALDB (`/opt/CALDB`), and the CIAO install (`/opt/ciao/...`).
 
-**Outputs:** a working environment, not files. Concretely:
-- the pipeline scripts on `PATH` (via `setup_swiftxrt`),
-- `$HEADAS`, `$CALDB`, `$CALDBCONFIG` exported,
-- scipy importable from CIAO's Python,
-- a green `swift_xrt_doctor.py` run (exit code 0).
+**Outputs:** two working terminals, not files:
+- a HEASoft terminal: pipeline on `PATH`, `$HEADAS`, `$CALDB` (Swift),
+  `$CALDBCONFIG` exported, no CIAO;
+- a CIAO terminal: pipeline on `PATH`, CIAO's Python with Sherpa;
+- a doctor run with no `[FAIL]` in each.
 
 Everything downstream — [Step 2](02-download.md) onward — assumes this state.
 
@@ -225,35 +263,35 @@ swift_xrt_doctor.py --quiet
 # Plain text for logs / CI
 swift_xrt_doctor.py --no-color
 
-# Single-user install (no root): put the /etc/bash.bashrc.local block in
-# ~/.bashrc or ~/.bash_profile instead. On a multi-user machine, a ~/.bashrc
-# install sets up the environment for only the one user who did it.
+# Single-user install (no root): put the /etc/bash.bashrc.local definitions
+# in ~/.bashrc instead. On a multi-user machine, a ~/.bashrc install sets up
+# the environment for only the one user who did it.
 ```
 
 ## Gotchas
 
-- **`$CALDB` and CIAO coexistence.** Sourcing CIAO repoints `$CALDB` at its own
-  Chandra calibration tree. If you run the fit step from a CIAO shell, the Swift
-  XRT RMFs won't be found under `$CALDB`. Either re-source the HEASoft CALDB
-  ahead of CIAO's, or pass `--caldb /opt/CALDB` to `swift_xrt_fit_spectra.py` /
-  `parallel_fit.py`. This is the most common yellow-flag the doctor reports, and
-  it is cross-referenced from [Step 2 — Download](02-download.md#gotchas) and the
-  fit step.
-- **`setup_swiftxrt` only touches `PATH`.** It does not source HEASoft, CIAO, or
-  CALDB — those are separate `source` lines in `/etc/bash.bashrc.local`. If the
-  doctor reports HEASoft missing even though `setup_swiftxrt` ran, you skipped
-  (or mis-ordered) the `source $HEADAS/headas-init.sh` line.
-- **Use the conda `-p` (prefix) form, not `-n` (name).** Install scipy into CIAO
-  with `conda install -p /opt/ciao/ciao-4.16 scipy`, pointing at the install
-  prefix. The named-environment form (`-n`) targets a different conda env and
-  won't land scipy where CIAO's Python actually looks.
-- **Sherpa lives only in CIAO's Python.** The fit step has no supported home
-  outside CIAO's bundled interpreter. That's why scipy is installed *into* CIAO
-  rather than into a separate venv — so one Python runs both the King-profile
-  step and the fit step.
-- **Site-wide vs. single-user.** On a shared box, install into
-  `/etc/bash.bashrc.local` so every user inherits the environment. A `~/.bashrc`
-  install only sets things up for the one user who did it.
+- **Never run `ciao` in the HEASoft terminal.** CIAO's Python resets `$HEADAS`
+  and `$CALDB` inside every pipeline script, so `xrt_pipeline.py` and the
+  extraction step fail (they now refuse to start and tell you so). Running
+  `heainit` afterwards does not undo it — CIAO's `python3` stays first on
+  `PATH` and `$CALDB` stays CIAO's. Open a new terminal.
+- **The fit needs `--caldb`.** In the CIAO terminal `$CALDB` is the Chandra
+  CALDB with no Swift files. Pass `--caldb /opt/CALDB` to
+  `swift_xrt_fit_spectra.py` / `parallel_fit.py`; without it they stop with an
+  error naming the problem.
+- **Download before `heainit`.** `heainit` activates the `heasoft` conda env,
+  whose Python lacks `requests`.
+- **`setup_swiftxrt` only touches `PATH`.** It does not set up HEASoft, CIAO,
+  or CALDB — that is `heainit` / `ciao`.
+- **Use the conda `-p` (prefix) form, not `-n` (name), for CIAO.** CIAO is
+  registered by path, so `conda install -n ciao-4.16 ...` silently does
+  nothing; use `conda install -p /opt/ciao/ciao-4.16 ...`.
+- **Keep working-directory paths reasonably short.** `xselect` reported
+  writing a spectrum but produced no file when the full path was ~140
+  characters; ~100-character paths work.
+- **Site-wide vs. single-user.** On a shared box, define the commands in
+  `/etc/bash.bashrc.local` so every user inherits them. A `~/.bashrc` install
+  only sets things up for the one user who did it.
 
 ## Notes
 

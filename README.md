@@ -13,18 +13,22 @@ Developed for analysis of point sources (e.g., blazars, AGN) observed across mul
 
 ## Quick start
 
-Download and reduce one epoch of 3C273 data, end to end:
+Download and reduce one epoch of 3C273 data, end to end. The pipeline uses
+**two terminals** — HEASoft for Steps 2–7, CIAO for the Step 8 fit — because
+CIAO breaks the HEASoft tools and Sherpa only exists in CIAO. See
+[docs/01-setup.md](docs/01-setup.md#two-terminals).
 
 ```bash
-# 1. Setup — see docs/01-setup.md for details
+# Terminal 1 (HEASoft) -- never run `ciao` here
 setup_swiftxrt
-
-# 2. Download epoch-1 data
 swift_xrt_download.py --name "3C 273" \
     --start-date 2008-08-04 --end-date 2011-07-06 \
-    --outdir XRT_input
+    --outdir XRT_input                       # Step 2, before heainit
+heainit
+# Steps 3-7: see docs/index.md
 
-# 3-8. See docs/index.md for the full walkthrough
+# Terminal 2 (CIAO) -- Step 8 only
+setup_swiftxrt; ciao
 ```
 
 ---
@@ -32,35 +36,38 @@ swift_xrt_download.py --name "3C 273" \
 ## Setup
 
 See [docs/01-setup.md](docs/01-setup.md) for installation, environment
-setup, and the `swift_xrt_doctor.py` verification script.
+setup, the two-terminal rule, and the `swift_xrt_doctor.py` verification
+script.
 
 ---
 
 ## Workflow Overview
 
-The pipeline is designed to be run step-by-step, with visual inspection at each stage. The recommended workflow is:
+The pipeline is designed to be run step-by-step, with visual inspection at
+each stage. Step numbers match [docs/](docs/index.md).
 
 ```
-0. Download & reduce data
-   a. Download from archive     →  swift_xrt_download.py
-   b. Run xrtpipeline           →  xrt_pipeline.py
-1. Survey observations          →  swift_xrt_summary.py
-2. PC-mode inspection
-   a. Pile-up / PSF analysis    →  swift_xrt_king_profile.py
-   b. Source images              →  swift_pc_source_viewer.py
-   c. Create PC master table    →  (shell command)
-3. WT-mode inspection
-   a. Profile viewer            →  swift_wt_summary_viewer.py
-   b. Create WT master table    →  make_wt_master_table.py
-4. Edit master tables           →  (manual review)
-5. Extract spectra              →  swift_xrt_extract_spectra.py
-6. Fit spectra & plot           →  swift_xrt_fit_spectra.py
-7. Customize plot (optional)    →  plot_lightcurve.py
+Step  What                         Script                        Terminal
+1     Setup                        swift_xrt_doctor.py           both
+2     Download                     swift_xrt_download.py         HEASoft (before heainit)
+3     Run xrtpipeline              xrt_pipeline.py               HEASoft
+4     Survey observations          swift_xrt_summary.py          either
+5     PC-mode inspection
+        a. Pile-up / PSF analysis  swift_xrt_king_profile.py     either
+        b. Source images           swift_pc_source_viewer.py     either
+        c. PC master table         (shell command)               either
+6     WT-mode inspection
+        a. Profile viewer          swift_wt_summary_viewer.py    either
+        b. WT master table         make_wt_master_table.py       either
+        c. Edit master tables      (manual review)
+7     Extract spectra              swift_xrt_extract_spectra.py  HEASoft
+8     Fit spectra & plot           swift_xrt_fit_spectra.py      CIAO (--caldb)
+        (optional) Customize plot  plot_lightcurve.py            either
 ```
 
-### Step 0a — Download → see [docs/02-download.md](docs/02-download.md)
+### Step 2 — Download → see [docs/02-download.md](docs/02-download.md)
 
-### Step 0b — Run xrtpipeline
+### Step 3 — Run xrtpipeline (HEASoft terminal)
 
 Run the Swift XRT pipeline to produce cleaned level-2 event files:
 
@@ -80,7 +87,7 @@ All subsequent steps are run from within the output directory:
 cd XRT_output
 ```
 
-### Step 1: Survey all observations
+### Step 4 — Survey all observations
 
 Get an overview of what data exists across all OBSIDs, including mode sequences, exposures, count rates, and orbit structure:
 
@@ -91,9 +98,9 @@ swift_xrt_summary.py --compact    # one row per OBSID
 
 This reveals which observations have PC data, WT data, or both, and flags potential pile-up.
 
-### Step 2: PC-mode inspection
+### Step 5 — PC-mode inspection
 
-**2a.** Fit King profiles to assess pile-up and determine extraction radii:
+**5a.** Fit King profiles to assess pile-up and determine extraction radii:
 
 ```bash
 swift_xrt_king_profile.py --ra 187.2779 --dec 2.0524
@@ -101,7 +108,7 @@ swift_xrt_king_profile.py --ra 187.2779 --dec 2.0524
 
 This produces per-observation diagnostic plots and `_pileup.txt` files with centroid positions and pile-up radii. For observations where the automated pile-up radius needs adjustment, create a `pileup_overrides.txt` file (see script details below).
 
-**2b.** Generate zoomed source images for visual inspection:
+**5b.** Generate zoomed source images for visual inspection:
 
 ```bash
 swift_pc_source_viewer.py
@@ -109,7 +116,7 @@ swift_pc_source_viewer.py
 
 Inspect the PDF for bad columns through the source, anomalous PSF shapes, or other issues.
 
-**2c.** Create the PC master table:
+**5c.** Create the PC master table:
 
 ```bash
 find . -name '*xpc*po*_cl.evt' | sort | \
@@ -120,15 +127,15 @@ find . -name '*xpc*po*_cl.evt' | sort | \
   > pc_master_table.txt
 ```
 
-### Step 3: WT-mode inspection
+### Step 6 — WT-mode inspection
 
-**3a.** Run the WT viewer to inspect strip profiles and extraction regions:
+**6a.** Run the WT viewer to inspect strip profiles and extraction regions:
 
 ```bash
 swift_wt_summary_viewer.py --ra 187.2779 --dec 2.0524
 ```
 
-**3b.** Generate the WT master table:
+**6b.** Generate the WT master table:
 
 ```bash
 make_wt_master_table.py
@@ -136,14 +143,14 @@ make_wt_master_table.py
 
 Observations under 20 seconds exposure are automatically set to `include=no`.
 
-### Step 4: Edit master tables
+**6c.** Edit the master tables. Open `pc_master_table.txt` and `wt_master_table.txt` in a text editor. Set `include` to `no` for any observations you want to exclude (bad columns through source, anomalous data, etc.). Add notes in the comment field.
 
-Open `pc_master_table.txt` and `wt_master_table.txt` in a text editor. Set `include` to `no` for any observations you want to exclude (bad columns through source, anomalous data, etc.). Add notes in the comment field.
+### Step 7 — Extract spectra (HEASoft terminal)
 
-### Step 5: Extract spectra
+Run this in the HEASoft terminal (`setup_swiftxrt; heainit`, **no** `ciao`);
+the scripts refuse to start in a CIAO terminal.
 
 ```bash
-# Initialize HEASoft and CALDB first, then:
 swift_xrt_extract_spectra.py --ra 187.2779 --dec 2.0524
 
 # Or one mode at a time:
@@ -154,16 +161,19 @@ swift_xrt_extract_spectra.py --ra 187.2779 --dec 2.0524 --mode wt
 parallel_extract.py --ra 187.2779 --dec 2.0524 --nproc 16
 ```
 
-### Step 6: Fit spectra and generate light curve
+Both exit non-zero and list the observations that failed, if any.
+
+### Step 8 — Fit spectra and generate light curve (CIAO terminal)
+
+Run this in a separate CIAO terminal (`setup_swiftxrt; ciao`) — Sherpa only
+exists there. CIAO points `$CALDB` at the Chandra CALDB, so always pass the
+HEASoft CALDB with `--caldb`:
 
 ```bash
-# If running within CIAO (Sherpa), specify the HEASoft CALDB path:
-swift_xrt_fit_spectra.py --nh 0.0179 --model simple \
-    --caldb /path/to/heasoft/caldb
+swift_xrt_fit_spectra.py --nh 0.0179 --model simple --caldb /opt/CALDB
 
 # With intrinsic absorption:
-swift_xrt_fit_spectra.py --nh 0.0179 --redshift 0.158 \
-    --caldb /path/to/heasoft/caldb
+swift_xrt_fit_spectra.py --nh 0.0179 --redshift 0.158 --caldb /opt/CALDB
 
 # For large datasets, run in parallel:
 parallel_fit.py --nh 0.0179 --model simple --caldb /opt/CALDB --nproc 16
@@ -171,7 +181,7 @@ parallel_fit.py --nh 0.0179 --model simple --caldb /opt/CALDB --nproc 16
 
 Output: `fit_results.txt` (table) and `flux_lightcurve.pdf` (νFν and Γ vs. time, with PC and WT points color-coded).
 
-### Step 7 (optional): Customize the light curve plot
+**Optional:** customize the light curve plot:
 
 ```bash
 # Remake with custom axis limits
@@ -446,7 +456,7 @@ The summary table includes observation dates and RMF filenames, useful for verif
 
 Batch spectral fitting using Sherpa. Fits each grouped spectrum independently with a powerlaw model and produces a combined results table and light curve plot.
 
-**Note:** If running within a CIAO environment, `$CALDB` points to the Chandra CALDB, not the HEASoft CALDB. Use `--caldb` to specify the HEASoft CALDB path so that Swift RMFs can be found.
+**Note:** Run this from the CIAO terminal (Sherpa lives only in CIAO's Python). There, `$CALDB` points to the Chandra CALDB, not the HEASoft CALDB, so pass `--caldb` (e.g. `--caldb /opt/CALDB`) so that Swift RMFs can be found; the script stops with an explanation if neither has them.
 
 ```
 Usage:
@@ -582,11 +592,16 @@ For datasets with 100+ observations, the extraction and fitting steps can take h
 
 A reasonable starting point is `--nproc` equal to half the number of CPU cores, since each xselect/xrtmkarf process is itself somewhat I/O bound. For a 48-core machine, `--nproc 16` to `--nproc 24` is a good range. Use `--dryrun` first to verify the chunk splitting.
 
-### CALDB and CIAO coexistence
+### HEASoft and CIAO: two terminals
 
-CIAO sets `$CALDB` to its own Chandra calibration directory. If you run the fitting script from a CIAO environment, use `--caldb /path/to/heasoft/caldb` to point to the HEASoft CALDB containing Swift XRT response files.
-
-The extraction script requires HEASoft tools and should be run from a HEASoft environment (not CIAO).
+HEASoft and CIAO cannot share a terminal for this pipeline. Once CIAO is set
+up, `python3` is CIAO's wrapper script, which resets `$HEADAS` and `$CALDB` to
+CIAO's own trees inside every pipeline script, so `xrtpipeline`, `xselect`,
+`xrtmkarf` and `grppha` fail. The fit, in turn, needs Sherpa, which only CIAO's
+Python has. Run Steps 2–7 in a HEASoft terminal and the Step 8 fit in a CIAO
+terminal with `--caldb /path/to/heasoft/caldb`. The scripts check this and say
+which terminal to use; `swift_xrt_doctor.py` lists which steps the current
+terminal can run. Details: [docs/01-setup.md](docs/01-setup.md#two-terminals).
 
 ### WT mode BACKSCAL
 
