@@ -8,7 +8,11 @@ file with an include flag that the user can edit to deselect
 observations.
 
 By default, observations with exposure < 20 seconds are
-marked include=no. All others are marked include=yes.
+marked include=no, as are observations where
+swift_wt_summary_viewer.py did not detect the source (recorded in
+{stem}_wt_profile.txt; typically the target fell outside the WT
+window). All others are marked include=yes. The comment column
+says why an observation was excluded.
 
 Usage:
     python make_wt_master_table.py
@@ -90,6 +94,28 @@ def get_file_info(filepath):
     return info
 
 
+def read_detection(obsid, stem):
+    """
+    Source-detection result from swift_wt_summary_viewer.py's
+    {stem}_wt_profile.txt: (detected, sigma), or None if the file is
+    missing or predates the detection check.
+    """
+    path = os.path.join(BASE_DIR, obsid, f'{stem}_wt_profile.txt')
+    if not os.path.exists(path):
+        return None
+    values = {}
+    with open(path) as f:
+        for line in f:
+            m = re.match(r'(source_detected|detection_sigma)\s*=\s*(\S+)',
+                         line.strip())
+            if m:
+                values[m.group(1)] = m.group(2)
+    if 'source_detected' not in values:
+        return None
+    return (values['source_detected'] == 'yes',
+            float(values.get('detection_sigma', 'nan')))
+
+
 def main():
     parser = argparse.ArgumentParser(
         description='Generate WT master table for pointed '
@@ -113,7 +139,9 @@ def main():
 
     # Read metadata for each file
     n_yes = 0
-    n_no = 0
+    n_short = 0
+    n_undetected = 0
+    no_profile = []
     lines = []
 
     for entry in entries:
@@ -122,12 +150,20 @@ def main():
         ct_rate = info['count_rate']
         n_gti = info['n_gti']
 
-        if exposure >= args.expmin:
-            include = 'yes'
-            n_yes += 1
-        else:
+        detection = read_detection(entry['obsid'], entry['stem'])
+        if exposure < args.expmin:
+            include, comment = 'no', f'exposure < {args.expmin:g} s'
+            n_short += 1
+        elif detection is not None and not detection[0]:
             include = 'no'
-            n_no += 1
+            comment = (f'source not detected ({detection[1]:.1f} sigma); '
+                       f'likely outside WT window')
+            n_undetected += 1
+        else:
+            include, comment = 'yes', ''
+            n_yes += 1
+            if detection is None:
+                no_profile.append(entry['stem'])
 
         lines.append({
             'obsid': entry['obsid'],
@@ -136,6 +172,7 @@ def main():
             'exposure': exposure,
             'ct_rate': ct_rate,
             'n_gti': n_gti,
+            'comment': comment,
         })
 
     # Write table
@@ -152,13 +189,22 @@ def main():
                     f"{row['exposure']:>8.1f} "
                     f"{row['ct_rate']:>8.2f} "
                     f"{row['n_gti']:>6} "
-                    f'""\n')
+                    f'"{row["comment"]}"\n')
 
     print(f"\nWrote {args.output}:")
     print(f"  {n_yes} observations include=yes "
           f"(exposure >= {args.expmin}s)")
-    print(f"  {n_no} observations include=no "
+    print(f"  {n_short} observations include=no "
           f"(exposure < {args.expmin}s)")
+    if n_undetected:
+        print(f"  {n_undetected} observations include=no "
+              f"(source not detected; see swift_wt_summary_viewer.py)")
+    if no_profile:
+        print(f"\nWARNING: {len(no_profile)} included observation(s) have "
+              f"no source-detection result (no up-to-date "
+              f"_wt_profile.txt). Run swift_wt_summary_viewer.py first:")
+        for stem in no_profile:
+            print(f"    {stem}")
     print(f"\nEdit the 'include' column to deselect observations.")
 
 
