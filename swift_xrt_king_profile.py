@@ -25,7 +25,23 @@ Optional arguments:
     --beta      King profile beta slope, fixed (default: 1.55)
     --sigma     Sigma threshold, 2 consecutive bins (default: 3.0)
     --sigma2    Sigma threshold, single bin (default: 4.0)
+    --sbthresh  Pile-up surface-brightness threshold, counts per frame
+                per arcmin^2 (default: 1.75), used for low-count obs
+    --maxs0err  Max fractional error on the King normalization S0 for
+                the profile-based radius to be trusted (default: 0.10)
     --pdf       Output PDF filename (default: king_profiles.pdf)
+
+Low-count guard:
+    With few counts, the residuals rarely reach --sigma, so the
+    profile method under-reports pile-up (3C 273 epoch 1: 122 s and
+    75 s exposures got 2" and 4" while 2-17 ks exposures of the same
+    ~2.5 ct/s source got 16-24"). When the wing fit is poorly
+    constrained (S0 error > --maxs0err), the radius is instead taken
+    where the fitted King profile -- unaffected by pile-up, since it is
+    fit to the wings -- falls below --sbthresh, or the measured radius
+    if larger. --sbthresh is calibrated on those well-exposed obs, where
+    the measured radius sits at ~1 ct/s/arcmin^2 in w3 (1.77 s frames);
+    it scales with frame time since pile-up is per frame.
 
 Optional override file:
     If a file named 'pileup_overrides.txt' exists in the working
@@ -514,7 +530,7 @@ def make_profile_plot(obsid, evt_stem, r_mid, sb, sb_err, popt, pcov,
 def process_event_file(filepath, ra_src, dec_src, rmin_fit, rmax_fit,
                        rbin, rmax_plot, centroid_radius, rc_fixed,
                        beta_fixed, sigma1, sigma2, obsid, output_dir,
-                       overrides):
+                       overrides, sb_thresh=1.75, max_s0_err=0.10):
     """
     Process one PC mode event file: centroid, extract profile, fit, plot.
 
@@ -636,6 +652,31 @@ def process_event_file(filepath, ra_src, dec_src, rmin_fit, rmax_fit,
             window_info = get_window_info(filepath)
             print(f"    {window_info['label']}")
 
+            # Low-count guard (see module docstring): if the wing fit
+            # is too poorly constrained for the profile method to see
+            # the pile-up edge, use the PSF surface-brightness radius.
+            measured_radius = pileup_radius
+            psf_radius = None
+            s0_frac_err = None
+            method = 'profile'
+            if popt is not None and pcov is not None and popt[0] > 0:
+                s0_frac_err = np.sqrt(pcov[0, 0]) / popt[0]
+                frame_time = window_info.get('frame_time') or 2.51
+                psf_radius = psf_pileup_radius(popt[0], popt[1], popt[2],
+                                               sb_thresh, frame_time)
+                print(f"    S0 error: {100 * s0_frac_err:.0f}%   "
+                      f"PSF-threshold radius: {psf_radius:.1f}\"")
+                if s0_frac_err > max_s0_err and \
+                        psf_radius > (measured_radius or 0.0):
+                    pileup_radius = round(psf_radius, 1)
+                    method = 'psf-threshold (low counts)'
+                    print(f"    LOW COUNTS: profile too poorly constrained "
+                          f"(S0 error {100 * s0_frac_err:.0f}% > "
+                          f"{100 * max_s0_err:.0f}%); using PSF-threshold "
+                          f"radius {pileup_radius:.1f}\" instead of "
+                          + (f"{measured_radius:.1f}\"" if measured_radius
+                             is not None else "none"))
+
             # Check for user override of pile-up radius
             override_radius = overrides.get(evt_stem, None)
             if override_radius is not None:
@@ -683,6 +724,16 @@ def process_event_file(filepath, ra_src, dec_src, rmin_fit, rmax_fit,
                 if override_radius is not None:
                     ftxt.write(f"override_radius_arcsec = "
                                f"{override_radius:.1f}\n")
+                ftxt.write(f"\n# How pileup_radius_arcsec was chosen:\n")
+                ftxt.write(f"pileup_method = {method}\n")
+                ftxt.write(f"measured_pileup_radius_arcsec = "
+                           + (f"{measured_radius:.1f}\n"
+                              if measured_radius is not None else "none\n"))
+                if psf_radius is not None:
+                    ftxt.write(f"psf_threshold_radius_arcsec = "
+                               f"{psf_radius:.1f}\n")
+                    ftxt.write(f"s0_fractional_error = "
+                               f"{s0_frac_err:.3f}\n")
             print(f"    Saved: {output_txt}")
 
             return output_png, fig
@@ -692,6 +743,18 @@ def process_event_file(filepath, ra_src, dec_src, rmin_fit, rmax_fit,
         import traceback
         traceback.print_exc()
         return None, None
+
+
+def psf_pileup_radius(s0, rc, beta, sb_thresh, frame_time):
+    """
+    Radius (arcsec) where the King source profile S0*(1+(r/rc)^2)^-beta,
+    in ct/s/arcmin^2, falls to sb_thresh counts per frame per arcmin^2.
+    0 if the peak is already below threshold.
+    """
+    thresh_rate = sb_thresh / frame_time
+    if s0 <= thresh_rate:
+        return 0.0
+    return rc * np.sqrt((s0 / thresh_rate) ** (1.0 / beta) - 1.0)
 
 
 # ---------------------------------------------------------------
@@ -733,6 +796,14 @@ def main():
                         help='Higher sigma threshold for pile-up, '
                              'single bin sufficient '
                              '(default: 4.0)')
+    parser.add_argument('--sbthresh', type=float, default=1.75,
+                        help='Pile-up surface-brightness threshold in '
+                             'counts/frame/arcmin^2, used for low-count '
+                             'obs (default: 1.75)')
+    parser.add_argument('--maxs0err', type=float, default=0.10,
+                        help='Max fractional S0 error for the '
+                             'profile-based pile-up radius to be trusted '
+                             '(default: 0.10)')
     parser.add_argument('--pdf', type=str, default='king_profiles.pdf',
                         help='Output multi-page PDF filename '
                              '(default: king_profiles.pdf)')
@@ -815,7 +886,7 @@ def main():
                 args.rmin, args.rmax, args.rbin, args.maxplot,
                 args.centroid, args.rc, args.beta,
                 args.sigma, args.sigma2, obsid, obsid_path,
-                overrides)
+                overrides, args.sbthresh, args.maxs0err)
             png, fig = result
             if png is not None:
                 all_pngs.append(png)

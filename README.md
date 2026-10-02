@@ -312,6 +312,10 @@ Key options:
     --sigma2    Pile-up detection threshold, single bin (default: 4.0)
     --rc        King core radius, fixed (default: 5.8")
     --beta      King beta slope, fixed (default: 1.55)
+    --sbthresh  Pile-up surface brightness, counts/frame/arcmin^2,
+                for the low-count guard (default: 1.75)
+    --maxs0err  Max fractional S0 error to trust the profile-based
+                radius (default: 0.10)
     --pdf       Output PDF filename (default: king_profiles.pdf)
 
 Output (per OBSID):
@@ -325,6 +329,8 @@ Override file (optional):
 ```
 
 The King model `S(r) = S0 * (1 + (r/rc)²)^(-β) + bkg` is fit to the outer wings only (rmin–rmax), then extrapolated inward. Where the data fall below the model indicates the pile-up boundary. The core radius (rc=5.8") and slope (β=1.55) are fixed to the Swift XRT calibration values; only S0 and background are free.
+
+**Low-count guard.** With few counts (short exposures), the residuals rarely reach the sigma thresholds, so the profile method under-reports pile-up: on 3C 273, 75–122 s PC snapshots got 2–4″ while long exposures of the same ~2.5 ct/s source got 16–24″. When the wing fit is poorly constrained (S0 error > `--maxs0err`), the script instead uses the radius where the fitted King profile, which is unaffected by pile-up, falls below `--sbthresh` (or the measured radius if larger). `--sbthresh` is calibrated on those long exposures, where it reproduces the measured radii to within a few arcsec, and scales with frame time. `_pileup.txt` records `pileup_method`, the measured radius and the PSF-threshold radius. After proper excision such snapshots often have too few counts to fit, which is the honest outcome: with the old radii they produced fluxes up to 2.4× too low.
 
 ### `swift_pc_source_viewer.py`
 
