@@ -119,4 +119,17 @@ on failure. Still open:
   Side note: `find_sky_position` derives the target X from RA only and Y
   from the median of nearby events (never from Dec). It works for on-axis
   data but is crude; a proper TAN-WCS seed would be more robust.
-- The King-profile low-count guard (from the May bug log) is untouched.
+- ~~King-profile low-count guard~~ — FIXED on `fix/king-lowcount-guard`.
+  043 (122 s) and 080 (75 s) got 2"/4" because with ~200-300 events the
+  residuals can't reach 3 sigma. The four long PC exposures of the same
+  ~2.5 ct/s source put the pile-up edge at ~1 ct/s/arcmin^2 of the wing-fit
+  King profile (w3; 1.75 counts/frame/arcmin^2); applying that to 043/080
+  gives 17.8"/17.2". When S0 error > 10% the script now uses that radius.
+  Evidence the old radii were wrong: 080's PC flux (4" exclusion) was 2.4x
+  below its own WT segment; 045's well-excised PC agrees with its WT to 3%.
+  With proper excision 043/080 have 57/39 counts left, too few to fit, so
+  they drop out of the light curve (080 keeps its WT point).
+  The fitter now counts "< 3 noticed bins" as a skip, not a failure.
+- 073's 24" radius (flagged in May as possibly over-estimated) is a
+  profile measurement and is untouched; the PSF-threshold radius for it is
+  20.4", consistent within the method's spread.
