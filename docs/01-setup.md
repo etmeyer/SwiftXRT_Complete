@@ -35,8 +35,7 @@ and CIAO — so both need to be installed before you start. `swift_xrt_doctor.py
 
 Each terminal runs the scripts with whatever `python3` comes first on its
 `PATH`, so these packages must be importable there. On amorgos the HEASoft
-terminal's Python (the `heasoft` conda env) has everything except `requests`
-and Sherpa, and CIAO's Python has everything including Sherpa.
+terminal's Python (the `heasoft` conda env) has everything except Sherpa, and CIAO's Python has everything including Sherpa.
 
 > Sherpa can also be obtained via `pip install sherpa` into a standalone
 > environment, but that is not the tested route here — CIAO is.
@@ -94,14 +93,14 @@ environment itself, e.g. by sourcing `headas-init.sh` / `ciao.sh` directly.
 
 | Terminal | Set up with | Runs |
 | -------- | ----------- | ---- |
-| **HEASoft** | `setup_swiftxrt`, then [Step 2](02-download.md), then `heainit` | Steps 2–7: download, xrtpipeline, survey, inspection, extraction |
+| **HEASoft** | `setup_swiftxrt; heainit` | Steps 2–7: download, xrtpipeline, survey, inspection, extraction |
 | **CIAO** | `setup_swiftxrt; ciao` | Step 8: fit, with `--caldb /opt/CALDB` |
 
 ```bash
 # Terminal 1 — HEASoft. Never run `ciao` in this terminal.
 setup_swiftxrt
-swift_xrt_download.py ...      # Step 2, before heainit (see below)
 heainit
+swift_xrt_download.py ...      # Step 2
 xrt_pipeline.py ...            # Steps 3-7
 ...
 
@@ -121,10 +120,8 @@ Why two:
   `heainit` again does not undo it; open a new terminal.
 - **Without CIAO there is no Sherpa.** In the HEASoft terminal the fit step
   stops with `ERROR: sherpa is not importable from this Python`.
-- **The download runs before `heainit`.** `heainit` switches `python3` to the
-  `heasoft` conda env, which has no `requests`. The download needs no HEASoft,
-  so run it right after `setup_swiftxrt`. (Steps 4–6 are plain Python and
-  also work in the CIAO terminal.)
+
+Steps 2 and 4–6 are plain Python and also work in the CIAO terminal.
 
 The scripts check this themselves: the HEASoft steps refuse to start in a CIAO
 terminal, and the fit refuses to start without Sherpa or without Swift
@@ -167,8 +164,7 @@ It checks that:
 - there is free disk at `/opt`.
 
 A healthy **HEASoft terminal** (`setup_swiftxrt; heainit`) on amorgos. The
-warnings are expected: `requests` is why the download runs before `heainit`,
-and Sherpa belongs to the CIAO terminal.
+Sherpa warning is expected: Sherpa belongs to the CIAO terminal.
 
 ```
 [OK] Pipeline on PATH: swift_xrt_summary.py -> /opt/swift-xrt-pipeline/swift_xrt_summary.py
@@ -188,18 +184,18 @@ and Sherpa belongs to the CIAO terminal.
 [OK] numpy        2.4.2
 [OK] scipy        1.15.2
 [OK] matplotlib   3.10.8
-[WARN] requests     not importable -- only Step 2 (download) needs it; run the download before `heainit`
+[OK] requests     2.34.2
 [WARN] astroquery not installed (optional; download script falls back to SIMBAD/NED/Sesame)
 [WARN] sherpa not importable -- not needed until the fit step (Step 8), which runs in a CIAO terminal: setup_swiftxrt; ciao
 [OK] Disk free at /opt: 14.8 GB
 
 This terminal can run:
-  Step 2     download                 no -- requests not importable here; run it before `heainit`
+  Step 2     download                 yes
   Steps 3, 7 xrtpipeline, extraction  yes
   Steps 4-6  survey, inspection       yes
   Step 8     fit                      no -- needs CIAO: setup_swiftxrt; ciao
 
-14 checks: 11 ok, 3 warn, 0 fail
+14 checks: 12 ok, 2 warn, 0 fail
 ```
 
 A healthy **CIAO terminal** (`setup_swiftxrt; ciao`). The CALDB warnings are
@@ -279,8 +275,6 @@ swift_xrt_doctor.py --no-color
   CALDB with no Swift files. Pass `--caldb /opt/CALDB` to
   `swift_xrt_fit_spectra.py` / `parallel_fit.py`; without it they stop with an
   error naming the problem.
-- **Download before `heainit`.** `heainit` activates the `heasoft` conda env,
-  whose Python lacks `requests`.
 - **`setup_swiftxrt` only touches `PATH`.** It does not set up HEASoft, CIAO,
   or CALDB — that is `heainit` / `ciao`.
 - **Use the conda `-p` (prefix) form, not `-n` (name), for CIAO.** CIAO is
