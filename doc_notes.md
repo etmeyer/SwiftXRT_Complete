@@ -96,10 +96,10 @@ on failure. Still open:
   2026-10-02 (`requests` + `charset-normalizer` only, with openssl/certifi/
   ca-certificates pinned to their existing versions); the "download before
   `heainit`" workaround was removed from the docs.
-- **`swift_xrt_download.py --obsid X --list-only` downloads anyway.**
-  `--list-only` is ignored with `--obsid` (26 files landed in
-  `./swift_xrt_data`). Docs say `--obsid` skips the catalog query, but
-  `--list-only` should still mean "don't download".
+- ~~`swift_xrt_download.py --obsid X --list-only` downloads anyway~~ —
+  FIXED on `fix/download-list-only`: the `--list-only` exit lived only in the
+  catalog (`--name`/`--ra`) branch; `--obsid`/`--obsid-file` now list the
+  OBSIDs and exit. The docs flowchart had the same bypass and is corrected.
 - **xselect silently loses output for long paths.** At ~140 characters it
   printed "Wrote spectrum to ..." but no file appeared (and it crashed in
   `xsl_exit`); ~100 characters work. Documented as a gotcha only.

@@ -1130,6 +1130,15 @@ def main():
         print("[info] No observation IDs to download.")
         sys.exit(0)
 
+    # The catalog path above already exited for --list-only; this covers
+    # --obsid / --obsid-file, which have no catalog rows to tabulate.
+    if args.list_only:
+        print(f"[info] {len(obsid_list)} observation ID(s):")
+        for oid in obsid_list:
+            print(f"  {oid}")
+        print("[info] Use without --list-only to download.")
+        sys.exit(0)
+
     # --- Apply --test / --max-obs limits ---
     limit = args.test if args.test is not None else args.max_obs
     if limit is not None:
