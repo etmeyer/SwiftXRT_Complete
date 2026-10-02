@@ -53,3 +53,25 @@ that branch (`fix/step2-download-script`); flagged for the relevant owners.
   succeeds first, but the `heasarc_date` branch never produces a valid URL. Not
   touched in 1.2.2.fix (URL discovery was out of scope); worth a real fix or
   removal in a later download-script session.
+
+Logged during **1.2.3.fix** (Step 3 `xrt_pipeline.py` wrapper hardening). The
+two `xrt_pipeline.py` items above (headless leapname/PIL abort, swallowed
+stdout/stderr) were the targets of this session and are now FIXED on
+`fix/step3-xrtpipeline-wrapper` — they can be struck from this file by the
+paired `1.2.3.doc` session. Diagnosis for the record: the "leapname" error was
+**not** matplotlib/Python-Imaging; it was HEASoft's Parameter Interface Library
+reading a CIAO-polluted `$HOME/pfiles/prefilter.par` (CIAO and HEASoft share
+`$HOME/pfiles`, and CIAO's prefilter had learned a non-existent
+`/opt/ciao/.../leapsec.fits` path). Fixed with a fresh per-run private PFILES.
+The headless `/dev/tty` abort is a separate cause (controlling-terminal
+requirement), fixed with a pty — `mode=h` does **not** help and is rejected by
+xrtpipeline's parser. New out-of-scope finding:
+
+- **`xrt_pipeline.py` runs xrtpipeline with `cwd=<input OBSID dir>`**, so the
+  cleaning step's xselect drops session files (`xselect.log`,
+  `xsel_timefile.asc`, `xselect<pid>*.flt`) into the *input* tree rather than a
+  scratch dir. Harmless today (per-OBSID dirs are unique, downstream is
+  unaffected, and the data tree is gitignored), but it mutates the read-only-ish
+  archive on every run and isn't reproducible-clean. Left as-is in 1.2.3.fix
+  (out of the four-issue scope; changing cwd needs its own validation). A future
+  hardening could run each OBSID from a private scratch cwd.
