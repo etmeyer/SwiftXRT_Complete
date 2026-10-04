@@ -300,7 +300,7 @@ Key options:
     --rbin      Radial bin width in arcsec (default: 2)
     --rc        King core radius, fixed (default: 5.8")
     --beta      King beta slope, fixed (default: 1.55)
-    --sbthresh  Pile-up threshold, counts/frame/arcmin^2 (default: 4.0)
+    --sbthresh  Pile-up threshold, counts/frame/arcmin^2 (default: 4.5)
     --sigma     Diagnostic ring flags, 2 consecutive bins (default: 3.0)
     --sigma2    Diagnostic ring flags, single bin (default: 4.0)
     --pdf       Output PDF filename (default: king_profiles.pdf)
@@ -317,9 +317,9 @@ Override file (optional):
     radius from _pileup.txt, not from the override file.
 ```
 
-The King model `S(r) = S0 * (1 + (r/rc)²)^(-β) + bkg` is fit to the outer wings only (rmin–rmax), where pile-up doesn't reach. The core radius (rc=5.8") and slope (β=1.55) are fixed; only S0 and background are free. The pile-up radius is where this profile, with S0 at the top of its 1σ range, falls below `--sbthresh` counts per frame per arcmin² (pile-up is per frame, so this scales with the window's frame time). If the radius reaches into the fitting annulus, the wings are refit further out.
+The radial profile divides each ring by its exposed area, from the xrtpipeline exposure map (`{stem}_ex.img`), so bad columns crossing the source don't distort it; without the map it falls back to the geometric area, with a warning. The King model `S(r) = S0 * (1 + (r/rc)²)^(-β) + bkg` is fit to the outer wings only (rmin–rmax), where pile-up doesn't reach. The core radius (rc=5.8") and slope (β=1.55) are fixed; only S0 and background are free. The pile-up radius is where this profile, with S0 at the top of its 1σ range, falls below `--sbthresh` counts per frame per arcmin² (pile-up is per frame, so this scales with the window's frame time). If the radius reaches into the fitting annulus, the wings are refit further out.
 
-The threshold was calibrated on spectra. For five 3C 273 PC observations, spectra extracted with inner radii of 0–28″ show the 1 keV flux levelling off once the piled-up core is excluded, at 10–16″. At 4.0 the radius lands 1–5″ beyond that in all five, and the fluxes agree with the levelled-off values. Rings that differ from the model by `--sigma`/`--sigma2` are still flagged in the plot and `_pileup.txt`, but only as a diagnostic: with thousands of counts, departures from the model outside the pile-up (the King shape isn't exact, and the profile isn't corrected for bad columns) show at 4–6σ, so the flags set radii of 20–24″ where 10–14″ suffices, and 10″ for an off-axis source whose flux was then 17% low. Details and the test: [docs/05-pc-inspection.md](docs/05-pc-inspection.md#how-the-radius-is-chosen).
+The threshold was calibrated on spectra. For five 3C 273 PC observations, spectra extracted with inner radii of 0–28″ show the 1 keV flux levelling off once the piled-up core is excluded, at 10–16″. At 4.5, with the exposure-corrected profile, the radius lands 1.5–5.4″ beyond that in all five, and the fluxes agree with the levelled-off values. Rings that differ from the model by `--sigma`/`--sigma2` are still flagged in the plot and `_pileup.txt`, but only as a diagnostic: they mark where the core deficit becomes significant (10–12″ for these), a few arcsec short of where the flux levels off. On the uncorrected profile, bad columns made the flags set 20–24″ where 10–14″ suffices, and 10″ for an off-axis source whose flux was then 17% low. Details and the test: [docs/05-pc-inspection.md](docs/05-pc-inspection.md#how-the-radius-is-chosen).
 
 ### `swift_pc_source_viewer.py`
 

@@ -198,27 +198,36 @@ Findings:
   σ_diff² = σ_outer² − σ_inner² for nested annuli). The flags missed in
   both directions, and a deficit-only test (with either PSF shape) gave
   8–10″ for 018/073, where their flux was still 9–18% low. The radius is
-  now the PSF surface-brightness threshold (S0 + 1σ) at 4.0
-  counts/frame/arcmin² for every observation; PR #11's 1.75 had been
-  calibrated to the inflated flag radii. Fluxes at the new radii match the
-  levelled-off values within 0.5σ, with 21–34% smaller errors for 018, 073
-  and 074. The calibration covers one source at 2.3–3.6 ct/s.
+  now the PSF surface-brightness threshold (S0 + 1σ) for every
+  observation, on the exposure-corrected profile (next bullet), at 4.5
+  counts/frame/arcmin²: the most that keeps every radius 1″ beyond where
+  its flux levels off is 4.9. PR #11's 1.75 had been calibrated to the
+  inflated flag radii. Fluxes at the new radii match the levelled-off
+  values within 0.8σ, and 018, 073 and 074 keep 1.5–2.3× the counts.
+  The calibration covers one source at 2.3–3.6 ct/s.
   Test data stay on amorgos in `test_runs/pu/` (gitignored): `R00`–`R28`
-  extractions and fits, `scan.json`, `NEW/` (new method), `analysis/`.
+  extractions and fits, `scan.json`, `NEW/` (threshold, uncorrected
+  profile), `NEW2/` (final: exposure-corrected, 4.5), `analysis/`
+  (`calibrate.py`, `calib_figure.py`, `expo_profiles.py`).
 - **The CALDB PC PSF (`swxpsf20010101v006`, 2020) is not the script's
   King shape.** v006 is a King with rc = 1.581 px (3.7″) and β = 1.305 plus
   a 7.5% Gaussian with σ = 3.149 px; the script's fixed rc = 5.8″,
-  β = 1.55 matches v004/v005. Neither describes the 12–20″ rings
-  consistently: data/model there runs from +34% (018) to −10% (045) with
-  the script's shape and +16% to −20% with v006, varying by observation.
-  Likely causes: bad columns crossing the source (the profile isn't
-  exposure-corrected), pile-up reaching ~16″ in the brightest (045), maybe
-  the 3C 273 jet at 13–22″ (a wedge test was inconclusive, confounded by
-  exposure). That per-observation structure, not pile-up, is what the
-  flags picked up; v006 in the profile gave the same radii.
+  β = 1.55 matches v004/v005. The PSF shape turned out not to matter
+  here (v006 in the profile gave the same radii); see the next bullet.
+- ~~The 12–20″ rings differ from the model by +34% to −10% by
+  observation~~ — CAUSE FOUND AND FIXED on the same branch: bad columns.
+  The profile divided counts by geometric ring area; bad columns crossing
+  the source remove 0–18% of the 20–60″ wing area (up to 13–32% of single
+  rings), which left S0 up to 24% low and the inner rings looking bright.
+  The profile now divides each ring by its exposed area from the
+  xrtpipeline exposure map (pixels whose centres fall in the ring, as the
+  events do, weighted by exposure). Corrected: 018 +34% → +3%, 073
+  +12% → −2%, wing χ²/dof 0.8–3.5 → 0.7–1.3, and the residual flags move
+  from 20–24″ to the core deficit at 10–12″. The off-axis pointing misses
+  the bad columns and never showed the bump.
 - **The fitter freezes Γ at `--defgamma` 2.0 below `--mingamma` 200
   counts.** For 3C 273 (Γ ≈ 1.5) that biases the 1 keV flux of short PC
-  snapshots such as 043 (82 counts at its new 14.2″). For 1.2.8.
+  snapshots such as 043 (84 counts at its new 13.7″). For 1.2.8.
 - **Overrides reach extraction only through `_pileup.txt`.** Extraction
   never reads `pileup_overrides.txt`, though `parallel_extract.py` symlinks
   it into each chunk dir as if it did. Documented ("re-run 5a"); for
