@@ -183,3 +183,60 @@ Logged during **1.2.4.doc** (Step 4 page, `docs/step4-survey`).
   quietly use the archive's own cleaned files (the PC master-table one-liner
   finds nothing there). The Step 4 page warns about it; later pages should
   say "run inside `XRT_output`" as well.
+
+Logged during **1.2.5.doc** (Step 5 page, `docs/step5-pc-inspection`).
+Findings:
+
+- ~~The pile-up radius counts excesses too~~ — REPLACED on
+  `docs/step5-pc-inspection` (the author asked for a smarter automatic
+  radius; overrides had been set by hand). The residual flags (|residual|,
+  3σ/4σ) set 018 and 073 at 20″/24″ from an excess at 13–23″, and the
+  off-axis SDSS J122933 pointing at 10″. Ground truth came from spectra:
+  for 018, 045, 073, 074 and 00091742013, inner radii 0–28″ were extracted
+  and fit with the pipeline (overrides + Steps 7–8), and the 1 keV flux
+  levels off at 10–16″ (2σ test against 20″, using
+  σ_diff² = σ_outer² − σ_inner² for nested annuli). The flags missed in
+  both directions, and a deficit-only test (with either PSF shape) gave
+  8–10″ for 018/073, where their flux was still 9–18% low. The radius is
+  now the PSF surface-brightness threshold (S0 + 1σ) for every
+  observation, on the exposure-corrected profile (next bullet), at 4.5
+  counts/frame/arcmin²: the most that keeps every radius 1″ beyond where
+  its flux levels off is 4.9. PR #11's 1.75 had been calibrated to the
+  inflated flag radii. Fluxes at the new radii match the levelled-off
+  values within 0.8σ, and 018, 073 and 074 keep 1.5–2.3× the counts.
+  The calibration covers one source at 2.3–3.6 ct/s.
+  Test data stay on amorgos in `test_runs/pu/` (gitignored): `R00`–`R28`
+  extractions and fits, `scan.json`, `NEW/` (threshold, uncorrected
+  profile), `NEW2/` (final: exposure-corrected, 4.5), `analysis/`
+  (`calibrate.py`, `calib_figure.py`, `expo_profiles.py`).
+- **The CALDB PC PSF (`swxpsf20010101v006`, 2020) is not the script's
+  King shape.** v006 is a King with rc = 1.581 px (3.7″) and β = 1.305 plus
+  a 7.5% Gaussian with σ = 3.149 px; the script's fixed rc = 5.8″,
+  β = 1.55 matches v004/v005. The PSF shape turned out not to matter
+  here (v006 in the profile gave the same radii); see the next bullet.
+- ~~The 12–20″ rings differ from the model by +34% to −10% by
+  observation~~ — CAUSE FOUND AND FIXED on the same branch: bad columns.
+  The profile divided counts by geometric ring area; bad columns crossing
+  the source remove 0–18% of the 20–60″ wing area (up to 13–32% of single
+  rings), which left S0 up to 24% low and the inner rings looking bright.
+  The profile now divides each ring by its exposed area from the
+  xrtpipeline exposure map (pixels whose centres fall in the ring, as the
+  events do, weighted by exposure). Corrected: 018 +34% → +3%, 073
+  +12% → −2%, wing χ²/dof 0.8–3.5 → 0.7–1.3, and the residual flags move
+  from 20–24″ to the core deficit at 10–12″. The off-axis pointing misses
+  the bad columns and never showed the bump.
+- **The fitter freezes Γ at `--defgamma` 2.0 below `--mingamma` 200
+  counts.** For 3C 273 (Γ ≈ 1.5) that biases the 1 keV flux of short PC
+  snapshots such as 043 (84 counts at its new 13.7″). For 1.2.8.
+- **Overrides reach extraction only through `_pileup.txt`.** Extraction
+  never reads `pileup_overrides.txt`, though `parallel_extract.py` symlinks
+  it into each chunk dir as if it did. Documented ("re-run 5a"); for
+  1.2.7 to decide whether extraction should read the file directly.
+- **Extraction ignores the pile-up radius, overrides included, below 0.5
+  ct/s** of whole-field rate (`get_inner_radius`). Documented.
+- **`badstripe` is parsed by the extractor and never used.** Documented as
+  a note-only column.
+- **`--sosta` reads `source_extraction_<OBSID>.txt` files that nothing in
+  the pipeline writes.** Documented; a candidate for removal.
+- **First images in `docs/img/`**: Step 5 profile and source plots, as
+  256-colour PNGs (25–32 KB each) that keep the plot colours exact.
