@@ -298,14 +298,11 @@ Key options:
     --rmin      Inner fit annulus radius in arcsec (default: 20)
     --rmax      Outer fit annulus radius in arcsec (default: 60)
     --rbin      Radial bin width in arcsec (default: 2)
-    --sigma     Pile-up detection threshold, 2 consecutive bins (default: 3.0)
-    --sigma2    Pile-up detection threshold, single bin (default: 4.0)
     --rc        King core radius, fixed (default: 5.8")
     --beta      King beta slope, fixed (default: 1.55)
-    --sbthresh  Pile-up surface brightness, counts/frame/arcmin^2,
-                for the low-count guard (default: 1.75)
-    --maxs0err  Max fractional S0 error to trust the profile-based
-                radius (default: 0.10)
+    --sbthresh  Pile-up threshold, counts/frame/arcmin^2 (default: 4.0)
+    --sigma     Diagnostic ring flags, 2 consecutive bins (default: 3.0)
+    --sigma2    Diagnostic ring flags, single bin (default: 4.0)
     --pdf       Output PDF filename (default: king_profiles.pdf)
 
 Output (per OBSID):
@@ -320,9 +317,9 @@ Override file (optional):
     radius from _pileup.txt, not from the override file.
 ```
 
-The King model `S(r) = S0 * (1 + (r/rc)²)^(-β) + bkg` is fit to the outer wings only (rmin–rmax), then extrapolated inward. Walking inward from 30″, the outermost ring that differs from the model (by `--sigma2`, or by `--sigma` in two neighbouring rings, in either direction) sets the pile-up radius. The core radius (rc=5.8") and slope (β=1.55) are fixed to the Swift XRT calibration values; only S0 and background are free.
+The King model `S(r) = S0 * (1 + (r/rc)²)^(-β) + bkg` is fit to the outer wings only (rmin–rmax), where pile-up doesn't reach. The core radius (rc=5.8") and slope (β=1.55) are fixed; only S0 and background are free. The pile-up radius is where this profile, with S0 at the top of its 1σ range, falls below `--sbthresh` counts per frame per arcmin² (pile-up is per frame, so this scales with the window's frame time). If the radius reaches into the fitting annulus, the wings are refit further out.
 
-**Low-count guard.** With few counts (short exposures), the residuals rarely reach the sigma thresholds, so the profile method under-reports pile-up: on 3C 273, 75–122 s PC snapshots got 2–4″ while long exposures of the same ~2.5 ct/s source got 16–24″. When the wing fit is poorly constrained (S0 error > `--maxs0err`), the script instead uses the radius where the fitted King profile, which is unaffected by pile-up, falls below `--sbthresh` (or the measured radius if larger). `--sbthresh` is calibrated on those long exposures, where it reproduces the measured radii to within a few arcsec, and scales with frame time. `_pileup.txt` records `pileup_method`, the measured radius and the PSF-threshold radius. After proper excision such snapshots often have too few counts to fit, which is the honest outcome: with the old radii they produced fluxes up to 2.4× too low.
+The threshold was calibrated on spectra. For five 3C 273 PC observations, spectra extracted with inner radii of 0–28″ show the 1 keV flux levelling off once the piled-up core is excluded, at 10–16″. At 4.0 the radius lands 1–5″ beyond that in all five, and the fluxes agree with the levelled-off values. Rings that differ from the model by `--sigma`/`--sigma2` are still flagged in the plot and `_pileup.txt`, but only as a diagnostic: with thousands of counts, departures from the model outside the pile-up (the King shape isn't exact, and the profile isn't corrected for bad columns) show at 4–6σ, so the flags set radii of 20–24″ where 10–14″ suffices, and 10″ for an off-axis source whose flux was then 17% low. Details and the test: [docs/05-pc-inspection.md](docs/05-pc-inspection.md#how-the-radius-is-chosen).
 
 ### `swift_pc_source_viewer.py`
 

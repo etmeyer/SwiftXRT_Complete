@@ -34,14 +34,17 @@ For each PC cleaned event file in each OBSID folder, the script:
    where pile-up doesn't reach. The shape is fixed at the Swift calibration
    values (rc = 5.8″, β = 1.55); only the normalization S0 and the background
    are free.
-4. **Finds where the data leave the model.** Walking inward from 30″, the
-   radius is the outer edge of the first ring that differs from the model by
-   4σ, or of the outer of two neighbouring rings that differ by 3σ.
-5. **Checks for low counts.** In a short exposure the residuals can't reach
-   3σ, so the measured radius comes out far too small. When S0 is uncertain by
-   more than 10%, the script instead uses the radius where the fitted model
-   falls to 1.75 counts per frame per arcmin², if that is larger. That
-   threshold was calibrated on the long 3C 273 exposures.
+4. **Sets the pile-up radius.** Pile-up depends on how many photons land on
+   the same pixels in one frame. So the radius is where the fitted profile,
+   which pile-up doesn't touch because it was fit to the wings, falls below
+   4 counts per frame per arcmin². S0 is taken at the top of its 1σ range, so
+   a short, noisy exposure errs toward a larger radius. If the radius reaches
+   into the 20–60″ fit range, those wings are piled up too, and the script
+   refits further out. [How the radius is chosen](#how-the-radius-is-chosen)
+   shows how the threshold was tested.
+5. **Flags rings that differ from the model**, by 4σ or by 3σ in two
+   neighbouring rings. The flags appear in the plot and in `_pileup.txt` as a
+   diagnostic only; they don't set the radius.
 6. **Applies overrides.** A radius you set in `pileup_overrides.txt` (in the
    working folder) replaces the automatic one.
 
@@ -53,9 +56,8 @@ For each PC cleaned event file in each OBSID folder, the script:
 | `--maxplot` | Largest radius plotted (default `--rmax` + 20) |
 | `--centroid` | Search radius for the source position, in arcsec (default 15) |
 | `--rc` / `--beta` | PSF shape, fixed (default 5.8″ and 1.55) |
-| `--sigma` / `--sigma2` | Thresholds for two neighbouring rings / one ring (default 3 and 4) |
-| `--sbthresh` | Low-count threshold in counts/frame/arcmin² (default 1.75) |
-| `--maxs0err` | Largest S0 error for trusting the measured radius (default 0.10) |
+| `--sbthresh` | Pile-up threshold in counts/frame/arcmin² (default 4.0) |
+| `--sigma` / `--sigma2` | Thresholds for the diagnostic ring flags: two neighbouring rings / one ring (default 3 and 4) |
 | `--pdf` | Name of the collected plots (default `king_profiles.pdf`) |
 
 ### 5b — Source images
@@ -90,83 +92,89 @@ table in [Step 6](06-wt-inspection.md), together with the WT table.
 
 ### Reading a profile plot
 
-![King profile of OBSID 00035017018: data fall far below the model inside 10 arcsec, sit above it between 13 and 19 arcsec, and follow it from 20 to 60 arcsec; the pile-up radius is 20 arcsec](img/step5_king_profile_018.png)
+![King profile of OBSID 00035017018: data fall far below the model inside 8 arcsec, sit above it between 13 and 19 arcsec, and follow it from 20 to 60 arcsec; the pile-up radius is 15.2 arcsec](img/step5_king_profile_018.png)
 
 The top panel shows the data (black) and the King model fitted to the shaded
 20–60″ wings (red), extended inward. The bottom panel shows the difference in
-σ. Orange and red diamonds are the 3σ and 4σ rings, and the dashed line is the
-chosen radius.
+σ, with orange and red diamonds for rings 3σ and 4σ off. The dashed line is
+the pile-up radius.
 
 Pile-up is the deficit in the core: here the data fall below the model inside
-about 8″, by up to 43σ. The radius, though, comes from the outermost flagged ring,
-and rings count whichever way they differ. In 018 an *excess* at 13–19″ sets
-the radius to 20″; in 073 one at 23″ sets 24″. So the radius errs on the large
-side: you lose some source counts, but no piled-up ones.
+about 8″, by up to 43σ. Between 13″ and 19″ the data sit *above* the model.
+Pile-up only removes counts, so that isn't pile-up. The rings between 12″
+and 20″ differ from the model by +34% to −10% from one observation to the
+next. The profile isn't corrected for bad columns crossing the source, and
+the King shape isn't exact. With thousands of counts, such differences show
+at 4–6σ. That is why the flags don't set the radius: they would put it at
+20″ here, and at 24″ for 073.
 
-### The low-count guard
+### How the radius is chosen
 
-![King profile of OBSID 00035017043, a 122-second exposure: the data are noisy and only the innermost ring is flagged, but the pile-up radius is set to 17.8 arcsec by the low-count guard](img/step5_king_profile_043.png)
+![Five panels, one per 3C 273 PC observation, of the 1 keV flux against the inner radius of the extraction annulus: the flux rises from about half its final value at 0 arcsec and levels off between 10 and 16 arcsec; the new radius lands just beyond that point in every panel, while the old radius is at 20 to 24 arcsec in three panels and too small, at 10 arcsec, for the off-axis pointing](img/step5_pileup_calibration.png)
 
-With 302 events, 043's profile is noisy. Only the innermost ring is flagged,
-which would exclude just 2″. Its S0 is uncertain by 24%, so the script uses
-the PSF threshold radius instead:
+The threshold was set by testing radii against spectra, not profiles. For
+five 3C 273 PC observations, spectra were extracted with inner radii from 0″
+to 28″ and fitted (Steps 7 and 8). While the inner radius is too small,
+piled-up events stay in the spectrum and the 1 keV flux comes out low. Once
+the core is excluded, the flux levels off. At 4.0 counts/frame/arcmin², the
+radius (orange) lands 1–5″ beyond that point in all five.
 
-```
-  Processing: sw00035017043xpcw3po_cl.evt
-    ...
-    Pile-up detected: recommended inner radius = 2.0"
-    Window: w3 (300x300px, 1.77s/frame)
-    S0 error: 24%   PSF-threshold radius: 17.8"
-    LOW COUNTS: profile too poorly constrained (S0 error 24% > 10%); using PSF-threshold radius 17.8" instead of 2.0"
-```
+The old radius (gray) came from the ring flags. It was larger than needed for
+018, 073 and 074, keeping only 42–65% of the counts the new radius keeps, and
+too small for the off-axis pointing, whose flux was then 17% low:
 
-The five PC observations in the test set:
+| OBSID | Flux levels off at | Old radius | New radius | Flux, old radius | Flux, new radius | Flux at 20″ |
+| ----- | ------------------ | ---------- | ---------- | ---------------- | ---------------- | ----------- |
+| 018 | 14″ | 20″ | 15.2″ | 1.53 ± 0.09 | 1.50 ± 0.07 | 1.53 ± 0.09 |
+| 045 | 16″ | 16″ | 18.7″ | 2.08 ± 0.07 | 2.14 ± 0.08 | 2.18 ± 0.09 |
+| 073 | 14″ | 24″ | 15.3″ | 1.29 ± 0.06 | 1.33 ± 0.04 | 1.36 ± 0.05 |
+| 074 | 10″ | 20″ | 14.8″ | 1.39 ± 0.03 | 1.38 ± 0.03 | 1.39 ± 0.03 |
+| 00091742013 | 12″ | 10″ | 15.8″ | 1.15 ± 0.07 | 1.33 ± 0.10 | 1.39 ± 0.12 |
 
-| OBSID | Exposure | S0 error | Measured | PSF threshold | Used |
-| ----- | -------- | -------- | -------- | ------------- | ---- |
-| 018 | 2545 s | 4% | 20.0″ | 20.2″ | 20.0″ |
-| 043 | 122 s | 24% | 2.0″ | 17.8″ | **17.8″** (guard) |
-| 073 | 6303 s | 3% | 24.0″ | 20.4″ | 24.0″ |
-| 080 | 75 s | 36% | 4.0″ | 17.2″ | **17.2″** (guard) |
-| 00091742013 | 1099 s | 6% | 10.0″ | 20.8″ | 10.0″ |
+Fluxes are at 1 keV, in 10⁻²⁸ erg cm⁻² s⁻¹ Hz⁻¹. "Levels off at" is the
+smallest radius from which the flux stays within 2σ of its value at 20″.
 
-The last row is the SDSS J122933+015810 pointing from Step 4, with 3C 273
-7.3′ off-axis. Its profile is clean, with the deficit starting at 10″. The PSF
-threshold assumes the on-axis PSF shape and doesn't apply here; it replaces
-the measured radius only for low-count data.
+The two short snapshots in the test set get 14.2″, because their S0 is
+uncertain by 24% (043, 122 s) and 36% (080, 75 s). 043 keeps 82 counts, enough
+for a fit with Γ frozen. 080 keeps too few, so it drops out of the light curve
+in Step 8.
 
-With proper exclusion, 043 and 080 keep too few counts to fit, so they drop
-out of the light curve in Step 8. With their old 2–4″ radii they produced PC
-fluxes up to 2.4 times too low.
+The calibration covers one source at 2.3–3.6 ct/s. Pile-up depends on counts
+per frame on each pixel, and that is what the threshold measures, so it
+should carry over to other sources. To check a source that is much brighter or
+fainter, repeat the test: set a series of radii with `pileup_overrides.txt`,
+re-run 5a, then extract and fit (Steps 7 and 8) at each.
 
 ### What `_pileup.txt` records
 
 ```
-# Pile-up analysis for sw00035017043xpcw3po
+# Pile-up analysis for sw00035017018xpcw3po
 # Source position (input): RA=187.277900 Dec=2.052400
-# Centroid position (pix): X=442.06 Y=512.01
+# Centroid position (pix): X=512.36 Y=512.09
 # Plate scale: 2.3573 arcsec/pixel
 # Sigma thresholds: 3.0 (2 consec), 4.0 (single)
 # King PSF: rc=5.80" beta=1.550 (fixed)
 # Window: Window: w3 (300x300px, 1.77s/frame)
-# Count rate: 2.468 ct/s
-pileup_radius_arcsec = 17.8
+# Count rate: 2.857 ct/s
+pileup_radius_arcsec = 15.2
 
 # How pileup_radius_arcsec was chosen:
-pileup_method = psf-threshold (low counts)
-measured_pileup_radius_arcsec = 2.0
-psf_threshold_radius_arcsec = 17.8
-s0_fractional_error = 0.236
+pileup_method = psf-threshold
+sb_threshold = 4 counts/frame/arcmin^2
+wing_fit_range_arcsec = 20-60
+s0_fractional_error = 0.042
+# Residual-flag radius, diagnostic only:
+measured_pileup_radius_arcsec = 20.0
 ```
 
 Step 7 reads the centroid, plate scale, count rate, `pileup_radius_arcsec` and
 `override_radius_arcsec` (present when an override applies). It extracts an
-annulus from the pile-up radius outward, centred on the centroid. The last
-four lines are a record of how the radius was chosen.
+annulus from the pile-up radius outward, centred on the centroid. The lines
+after the blank line record how the radius was chosen.
 
 ### What to look for in the images
 
-![Source image of OBSID 00035017073: a single point source at the magenta centroid, with the 24-arcsec pile-up radius drawn as a red dashed circle](img/step5_source_073.png)
+![Source image of OBSID 00035017073: a single point source at the magenta centroid, with the 15.3-arcsec pile-up radius drawn as a red dashed circle](img/step5_source_073.png)
 
 - **One point source at the magenta mark.** If the mark sits off the source,
   `--ra`/`--dec` or the centroid search went wrong.

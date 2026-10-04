@@ -184,17 +184,41 @@ Logged during **1.2.4.doc** (Step 4 page, `docs/step4-survey`).
   finds nothing there). The Step 4 page warns about it; later pages should
   say "run inside `XRT_output`" as well.
 
-Logged during **1.2.5.doc** (Step 5 page, `docs/step5-pc-inspection`). No
-code changes. Findings:
+Logged during **1.2.5.doc** (Step 5 page, `docs/step5-pc-inspection`).
+Findings:
 
-- **Question for the author: the pile-up radius counts excesses too.**
-  `detect_pileup_radius` flags rings by |residual|, so an excess above the
-  fixed-shape King model sets the radius as readily as the core deficit.
-  On-axis 3C 273: 018's deficit ends at ~8″ but an excess at 13–19″ sets
-  20″; 073's ends at ~10″ but an excess at 23″ sets 24″. The off-axis
-  SDSS J122933 pointing (3C 273 at 7.3′) has no excess and gets 10″ from
-  the deficit. The excess may mean the fixed rc/β doesn't match this
-  source's PSF. It errs conservative; documented, not changed.
+- ~~The pile-up radius counts excesses too~~ — REPLACED on
+  `docs/step5-pc-inspection` (the author asked for a smarter automatic
+  radius; overrides had been set by hand). The residual flags (|residual|,
+  3σ/4σ) set 018 and 073 at 20″/24″ from an excess at 13–23″, and the
+  off-axis SDSS J122933 pointing at 10″. Ground truth came from spectra:
+  for 018, 045, 073, 074 and 00091742013, inner radii 0–28″ were extracted
+  and fit with the pipeline (overrides + Steps 7–8), and the 1 keV flux
+  levels off at 10–16″ (2σ test against 20″, using
+  σ_diff² = σ_outer² − σ_inner² for nested annuli). The flags missed in
+  both directions, and a deficit-only test (with either PSF shape) gave
+  8–10″ for 018/073, where their flux was still 9–18% low. The radius is
+  now the PSF surface-brightness threshold (S0 + 1σ) at 4.0
+  counts/frame/arcmin² for every observation; PR #11's 1.75 had been
+  calibrated to the inflated flag radii. Fluxes at the new radii match the
+  levelled-off values within 0.5σ, with 21–34% smaller errors for 018, 073
+  and 074. The calibration covers one source at 2.3–3.6 ct/s.
+  Test data stay on amorgos in `test_runs/pu/` (gitignored): `R00`–`R28`
+  extractions and fits, `scan.json`, `NEW/` (new method), `analysis/`.
+- **The CALDB PC PSF (`swxpsf20010101v006`, 2020) is not the script's
+  King shape.** v006 is a King with rc = 1.581 px (3.7″) and β = 1.305 plus
+  a 7.5% Gaussian with σ = 3.149 px; the script's fixed rc = 5.8″,
+  β = 1.55 matches v004/v005. Neither describes the 12–20″ rings
+  consistently: data/model there runs from +34% (018) to −10% (045) with
+  the script's shape and +16% to −20% with v006, varying by observation.
+  Likely causes: bad columns crossing the source (the profile isn't
+  exposure-corrected), pile-up reaching ~16″ in the brightest (045), maybe
+  the 3C 273 jet at 13–22″ (a wedge test was inconclusive, confounded by
+  exposure). That per-observation structure, not pile-up, is what the
+  flags picked up; v006 in the profile gave the same radii.
+- **The fitter freezes Γ at `--defgamma` 2.0 below `--mingamma` 200
+  counts.** For 3C 273 (Γ ≈ 1.5) that biases the 1 keV flux of short PC
+  snapshots such as 043 (82 counts at its new 14.2″). For 1.2.8.
 - **Overrides reach extraction only through `_pileup.txt`.** Extraction
   never reads `pileup_overrides.txt`, though `parallel_extract.py` symlinks
   it into each chunk dir as if it did. Documented ("re-run 5a"); for
