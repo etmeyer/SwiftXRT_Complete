@@ -26,22 +26,33 @@ Optional arguments:
     --sigma     Sigma threshold, 2 consecutive bins (default: 3.0)
     --sigma2    Sigma threshold, single bin (default: 4.0)
     --sbthresh  Pile-up surface-brightness threshold, counts per frame
-                per arcmin^2 (default: 1.75), used for low-count obs
-    --maxs0err  Max fractional error on the King normalization S0 for
-                the profile-based radius to be trusted (default: 0.10)
+                per arcmin^2 (default: 4.0)
     --pdf       Output PDF filename (default: king_profiles.pdf)
 
-Low-count guard:
-    With few counts, the residuals rarely reach --sigma, so the
-    profile method under-reports pile-up (3C 273 epoch 1: 122 s and
-    75 s exposures got 2" and 4" while 2-17 ks exposures of the same
-    ~2.5 ct/s source got 16-24"). When the wing fit is poorly
-    constrained (S0 error > --maxs0err), the radius is instead taken
-    where the fitted King profile -- unaffected by pile-up, since it is
-    fit to the wings -- falls below --sbthresh, or the measured radius
-    if larger. --sbthresh is calibrated on those well-exposed obs, where
-    the measured radius sits at ~1 ct/s/arcmin^2 in w3 (1.77 s frames);
-    it scales with frame time since pile-up is per frame.
+Pile-up radius:
+    The radius is where the King profile fitted to the wings -- which
+    pile-up does not reach -- falls below --sbthresh counts per frame
+    per arcmin^2 (pile-up is per frame, so this scales with the
+    window's frame time). S0 is taken at the top of its 1-sigma range,
+    so a poorly measured profile errs toward a larger radius. If the
+    radius reaches into the fitting annulus, the wings are refit
+    further out.
+
+    The threshold is calibrated on spectra, not on the profile. For the
+    five well-exposed 3C 273 PC observations (2.3-3.6 ct/s), spectra
+    were extracted with inner radii of 0-28" and fit: the 1 keV flux
+    rises with the inner radius until the piled-up core is excluded,
+    then levels off, at 10-16". At 4.0 the radius lies 1-5" outside
+    that point for all five.
+
+    The residual flags (--sigma, --sigma2) are kept as a diagnostic in
+    the plot and _pileup.txt but no longer choose the radius. They
+    mislead both ways: outside the pile-up, the 12-20" rings differ from
+    the model by +34% to -10% from one observation to the next (the
+    King shape isn't exact and the profile isn't corrected for bad
+    columns), which thousands of counts make 4-6 sigma. They gave
+    20-24" where 10-14" suffices, and an off-axis source 10" where its
+    flux was still 17% low.
 
 Optional override file:
     If a file named 'pileup_overrides.txt' exists in the working
@@ -530,7 +541,7 @@ def make_profile_plot(obsid, evt_stem, r_mid, sb, sb_err, popt, pcov,
 def process_event_file(filepath, ra_src, dec_src, rmin_fit, rmax_fit,
                        rbin, rmax_plot, centroid_radius, rc_fixed,
                        beta_fixed, sigma1, sigma2, obsid, output_dir,
-                       overrides, sb_thresh=1.75, max_s0_err=0.10):
+                       overrides, sb_thresh=4.0):
     """
     Process one PC mode event file: centroid, extract profile, fit, plot.
 
@@ -624,58 +635,44 @@ def process_event_file(filepath, ra_src, dec_src, rmin_fit, rmax_fit,
             total_cts = np.sum(counts)
             print(f"    Events within {rmax_plot}\": {total_cts}")
 
-            # Fit King profile
-            print(f"    Fitting King profile in {rmin_fit}-{rmax_fit}\" ...")
-            popt, pcov, mask_fit = fit_king_profile(
-                r_mid, sb, sb_err, rmin_fit, rmax_fit, rc_fixed,
-                beta_fixed)
-
-            if popt is not None:
-                print(f"    Best fit: S0={popt[0]:.3e}  "
-                      f"rc={popt[1]:.2f}\"  beta={popt[2]:.3f}  "
-                      f"bkg={popt[3]:.3e}")
-
-            # Detect pile-up radius
-            pileup_radius, flag_level, resid_sigma = \
-                detect_pileup_radius(
-                    r_mid, sb, sb_err, popt, sigma1, sigma2, rbin)
-
-            if pileup_radius is not None:
-                print(f"    Pile-up detected: recommended inner radius "
-                      f"= {pileup_radius:.1f}\"")
-            else:
-                print(f"    No pile-up detected at "
-                      f"{sigma1:.1f}/{sigma2:.1f} sigma thresholds.")
-
             # Plot — use event filename stem for unique naming
             evt_stem = os.path.basename(filepath).replace('_cl.evt.gz', '').replace('_cl.evt', '')
             window_info = get_window_info(filepath)
             print(f"    {window_info['label']}")
+            frame_time = window_info.get('frame_time') or 2.51
 
-            # Low-count guard (see module docstring): if the wing fit
-            # is too poorly constrained for the profile method to see
-            # the pile-up edge, use the PSF surface-brightness radius.
-            measured_radius = pileup_radius
-            psf_radius = None
-            s0_frac_err = None
-            method = 'profile'
-            if popt is not None and pcov is not None and popt[0] > 0:
-                s0_frac_err = np.sqrt(pcov[0, 0]) / popt[0]
-                frame_time = window_info.get('frame_time') or 2.51
-                psf_radius = psf_pileup_radius(popt[0], popt[1], popt[2],
-                                               sb_thresh, frame_time)
-                print(f"    S0 error: {100 * s0_frac_err:.0f}%   "
-                      f"PSF-threshold radius: {psf_radius:.1f}\"")
-                if s0_frac_err > max_s0_err and \
-                        psf_radius > (measured_radius or 0.0):
-                    pileup_radius = round(psf_radius, 1)
-                    method = 'psf-threshold (low counts)'
-                    print(f"    LOW COUNTS: profile too poorly constrained "
-                          f"(S0 error {100 * s0_frac_err:.0f}% > "
-                          f"{100 * max_s0_err:.0f}%); using PSF-threshold "
-                          f"radius {pileup_radius:.1f}\" instead of "
-                          + (f"{measured_radius:.1f}\"" if measured_radius
-                             is not None else "none"))
+            # Fit the wings; the pile-up radius is where the fitted
+            # profile falls below sb_thresh (see module docstring).
+            popt, pcov, mask_fit, fit_rmin, pileup_radius, s0_frac_err = \
+                fit_wings_and_radius(r_mid, sb, sb_err, rmin_fit, rmax_fit,
+                                     rbin, rc_fixed, beta_fixed, sb_thresh,
+                                     frame_time)
+            if popt is not None:
+                print(f"    Best fit ({fit_rmin:g}-{rmax_fit:g}\"): "
+                      f"S0={popt[0]:.3e}  rc={popt[1]:.2f}\"  "
+                      f"beta={popt[2]:.3f}  bkg={popt[3]:.3e}")
+            if pileup_radius is not None and pileup_radius < rbin / 2:
+                pileup_radius = None   # below threshold even at the peak
+            if pileup_radius is not None:
+                pileup_radius = round(pileup_radius, 1)
+                print(f"    Pile-up radius: {pileup_radius:.1f}\" (profile "
+                      f"above {sb_thresh:g} counts/frame/arcmin^2; "
+                      f"S0 error {100 * s0_frac_err:.0f}%)")
+            elif popt is None:
+                print("    King fit failed: no pile-up radius.")
+            else:
+                print("    No pile-up: the profile peak is below "
+                      f"{sb_thresh:g} counts/frame/arcmin^2.")
+
+            # Residual flags: a diagnostic only (plotted and recorded).
+            measured_radius, flag_level, resid_sigma = \
+                detect_pileup_radius(
+                    r_mid, sb, sb_err, popt, sigma1, sigma2, rbin)
+            print(f"    Residual flags ({sigma1:.1f}/{sigma2:.1f} sigma, "
+                  f"diagnostic only): "
+                  + (f"{measured_radius:.1f}\"" if measured_radius
+                     is not None else "none"))
+            method = 'psf-threshold'
 
             # Check for user override of pile-up radius
             override_radius = overrides.get(evt_stem, None)
@@ -689,7 +686,7 @@ def process_event_file(filepath, ra_src, dec_src, rmin_fit, rmax_fit,
                                        f'{evt_stem}_king_profile.png')
             fig = make_profile_plot(obsid, evt_stem, r_mid, sb, sb_err,
                               popt, pcov,
-                              mask_fit, rmin_fit, rmax_fit, rmax_plot,
+                              mask_fit, fit_rmin, rmax_fit, rmax_plot,
                               exposure, len(x_events), window_info,
                               sigma1, sigma2, pileup_radius,
                               override_radius, flag_level, output_png)
@@ -726,14 +723,17 @@ def process_event_file(filepath, ra_src, dec_src, rmin_fit, rmax_fit,
                                f"{override_radius:.1f}\n")
                 ftxt.write(f"\n# How pileup_radius_arcsec was chosen:\n")
                 ftxt.write(f"pileup_method = {method}\n")
+                ftxt.write(f"sb_threshold = {sb_thresh:g} "
+                           f"counts/frame/arcmin^2\n")
+                ftxt.write(f"wing_fit_range_arcsec = "
+                           f"{fit_rmin:g}-{rmax_fit:g}\n")
+                if s0_frac_err is not None:
+                    ftxt.write(f"s0_fractional_error = "
+                               f"{s0_frac_err:.3f}\n")
+                ftxt.write(f"# Residual-flag radius, diagnostic only:\n")
                 ftxt.write(f"measured_pileup_radius_arcsec = "
                            + (f"{measured_radius:.1f}\n"
                               if measured_radius is not None else "none\n"))
-                if psf_radius is not None:
-                    ftxt.write(f"psf_threshold_radius_arcsec = "
-                               f"{psf_radius:.1f}\n")
-                    ftxt.write(f"s0_fractional_error = "
-                               f"{s0_frac_err:.3f}\n")
             print(f"    Saved: {output_txt}")
 
             return output_png, fig
@@ -755,6 +755,49 @@ def psf_pileup_radius(s0, rc, beta, sb_thresh, frame_time):
     if s0 <= thresh_rate:
         return 0.0
     return rc * np.sqrt((s0 / thresh_rate) ** (1.0 / beta) - 1.0)
+
+
+def fit_wings_and_radius(r_mid, sb, sb_err, rmin_fit, rmax_fit, rbin,
+                         rc_fixed, beta_fixed, sb_thresh, frame_time):
+    """
+    Fit the King profile to the wings and find the pile-up radius,
+    with S0 at the top of its 1-sigma range. If the radius reaches into
+    the fitting annulus, the wings there are piled up too and pull S0
+    down, so refit from just outside it (a few times at most).
+
+    Returns (popt, pcov, mask_fit, rmin_used, radius, s0_frac_err);
+    radius and s0_frac_err are None if the fit failed.
+    """
+    def radius_of(popt, pcov):
+        if popt is None or popt[0] <= 0:
+            return None
+        s0_hi = popt[0] + np.sqrt(pcov[0, 0])
+        return psf_pileup_radius(s0_hi, popt[1], popt[2], sb_thresh,
+                                 frame_time)
+
+    popt, pcov, mask_fit = fit_king_profile(
+        r_mid, sb, sb_err, rmin_fit, rmax_fit, rc_fixed, beta_fixed)
+    for _ in range(4):
+        radius = radius_of(popt, pcov)
+        if radius is None or radius < rmin_fit:
+            break
+        next_rmin = (np.floor(radius / rbin) + 2) * rbin
+        if next_rmin + 3 * rbin > rmax_fit:
+            break
+        print(f"    Pile-up reaches {radius:.1f}\", inside the fit range; "
+              f"refitting the wings from {next_rmin:g}\"")
+        refit = fit_king_profile(r_mid, sb, sb_err, next_rmin, rmax_fit,
+                                 rc_fixed, beta_fixed)
+        if refit[0] is None:
+            break
+        popt, pcov, mask_fit = refit
+        rmin_fit = next_rmin
+
+    radius = radius_of(popt, pcov)
+    if radius is None:
+        return popt, pcov, mask_fit, rmin_fit, None, None
+    return (popt, pcov, mask_fit, rmin_fit, radius,
+            np.sqrt(pcov[0, 0]) / popt[0])
 
 
 # ---------------------------------------------------------------
@@ -796,14 +839,11 @@ def main():
                         help='Higher sigma threshold for pile-up, '
                              'single bin sufficient '
                              '(default: 4.0)')
-    parser.add_argument('--sbthresh', type=float, default=1.75,
+    parser.add_argument('--sbthresh', type=float, default=4.0,
                         help='Pile-up surface-brightness threshold in '
-                             'counts/frame/arcmin^2, used for low-count '
-                             'obs (default: 1.75)')
-    parser.add_argument('--maxs0err', type=float, default=0.10,
-                        help='Max fractional S0 error for the '
-                             'profile-based pile-up radius to be trusted '
-                             '(default: 0.10)')
+                             'counts/frame/arcmin^2; the pile-up radius '
+                             'is where the fitted profile falls below it '
+                             '(default: 4.0)')
     parser.add_argument('--pdf', type=str, default='king_profiles.pdf',
                         help='Output multi-page PDF filename '
                              '(default: king_profiles.pdf)')
@@ -849,7 +889,9 @@ def main():
     print(f"\nSource position: RA={args.ra:.6f}, Dec={args.dec:.6f}")
     print(f"Fitting annulus: {args.rmin}-{args.rmax} arcsec")
     print(f"King PSF: rc={args.rc}\" (fixed), beta={args.beta} (fixed)")
-    print(f"Pile-up sigma threshold: {args.sigma} (2 consec), "
+    print(f"Pile-up radius: where the profile falls below "
+          f"{args.sbthresh:g} counts/frame/arcmin^2")
+    print(f"Residual flags (diagnostic): {args.sigma} (2 consec), "
           f"{args.sigma2} (single)")
     print(f"Radial bin width: {args.rbin} arcsec")
     print(f"Plot range: 0-{args.maxplot} arcsec")
@@ -886,7 +928,7 @@ def main():
                 args.rmin, args.rmax, args.rbin, args.maxplot,
                 args.centroid, args.rc, args.beta,
                 args.sigma, args.sigma2, obsid, obsid_path,
-                overrides, args.sbthresh, args.maxs0err)
+                overrides, args.sbthresh)
             png, fig = result
             if png is not None:
                 all_pngs.append(png)
