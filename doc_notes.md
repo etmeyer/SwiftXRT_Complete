@@ -27,8 +27,9 @@ that PR — they belong to later doc sessions or to the fix side.
 Logged during **1.2.2.fix** (Step 2/3 `swift_xrt_download.py`). Out of scope for
 that branch (`fix/step2-download-script`); flagged for the relevant owners.
 
-- **`xrt_pipeline.py` wrapper fails where bare `xrtpipeline` succeeds (env).**
-  Running the wrapper headless on amorgos aborts in the `prefilter`/`xrtfilter`
+- ~~**`xrt_pipeline.py` wrapper fails where bare `xrtpipeline` succeeds (env).**~~
+  FIXED in PR #5; the by-hand workaround is gotcha 8 in
+  `docs/03-xrtpipeline.md`. Running the wrapper headless on amorgos aborts in the `prefilter`/`xrtfilter`
   step with `couldn't get parameter 'leapname' [file not found (or has wrong
   access type)]` (PIL_BAD_FILE_ACCESS) — even though `pget prefilter leapname`
   resolves to `$HEADAS/refdata/leapsec.fits` and that file is readable. Running
@@ -40,7 +41,9 @@ that branch (`fix/step2-download-script`); flagged for the relevant owners.
   separate from the known `[MISSING] attitude_file/hk_file`-on-success post-check
   bug already in the 1.1 bug log (Step 4 entry).
 
-- **`xrt_pipeline.py` suppresses xrtpipeline's own stdout/stderr.** On failure
+- ~~**`xrt_pipeline.py` suppresses xrtpipeline's own stdout/stderr.**~~ FIXED in
+  PR #5; 1.2.3.doc made the printed lines skip xrtpipeline's closing
+  banner so they show the error itself. On failure
   the wrapper prints only `[FAILED] … exit code N` + `[MISSING] …` lines; the
   real xrtpipeline error is buried in `<outdir>/xrtpipeline_<obsid>.log`. Made
   diagnosing the leapname issue slower than it needed to be. Step-4 session.
@@ -74,7 +77,8 @@ xrtpipeline's parser. New out-of-scope finding:
   unaffected, and the data tree is gitignored), but it mutates the read-only-ish
   archive on every run and isn't reproducible-clean. Left as-is in 1.2.3.fix
   (out of the four-issue scope; changing cwd needs its own validation). A future
-  hardening could run each OBSID from a private scratch cwd.
+  hardening could run each OBSID from a private scratch cwd. Still open;
+  documented as gotcha 7 in `docs/03-xrtpipeline.md` (1.2.3.doc).
 
 Logged during **two-terminal env fix** (`fix/two-shell-env`, prompted by a
 user report of "step 5" errors blamed on the environment not finding Sherpa).
@@ -133,3 +137,28 @@ on failure. Still open:
 - 073's 24" radius (flagged in May as possibly over-estimated) is a
   profile measurement and is untouched; the PSF-threshold radius for it is
   20.4", consistent within the method's spread.
+
+Logged during **1.2.3.doc** (Step 3 page, `docs/step3-xrtpipeline`). Writing
+the page turned up four `xrt_pipeline.py` problems, fixed on that branch:
+`--batch` always exited 0; the failure lines showed xrtpipeline's closing
+banner instead of the error; batch mode never checked products (an exit 0
+without a cleaned file would have dropped the OBSID silently), and the
+single-OBSID check expected WT products from WT settling-only data (073,
+074); `--createexpomap no` always failed because xrtpipeline's `useexpomap`
+stayed `yes`. Other findings:
+
+- **037 no longer hangs, even with `--extractproducts yes`** (31 s on
+  2026-10-04). Probably PR #5's stdin from `/dev/null`: in May the hung
+  xselect was waiting on the terminal. The timeout stays as a backstop.
+- **On a timeout the printed lines say little.** xrtpipeline's output is
+  block-buffered into the pipe, so a killed run has usually flushed only its
+  opening banner. The reason line still says "timeout after N seconds".
+- **Extraction's own exposure-map path never runs** in the `XRT_output`
+  layout: `find_auxiliary_files` looks for `sw<OBSID>*pat|sat.fits*` and
+  `*xhd.hk*` in the output folder, but the attitude file stays in
+  `XRT_input/<OBSID>/auxil/` and xrtpipeline writes `xhdtc.hk`. So Step 7
+  always uses xrtpipeline's `*_ex.img`, and fails without it. For 1.2.7.doc.
+- **The King profile and PC viewer read every `*xpc*_cl.evt`**, not just
+  pointed ones (the WT tools and both master tables take `po` only).
+  Harmless for 3C 273, whose PC data are all pointed, but a PC settling or
+  slew file would be profiled. For 1.2.5.doc.
