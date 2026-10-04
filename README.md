@@ -66,16 +66,11 @@ Step  What                         Script                        Terminal
 
 ### Step 2 — Download → see [docs/02-download.md](docs/02-download.md)
 
-### Step 3 — Run xrtpipeline (HEASoft terminal)
+### Step 3 — Run xrtpipeline → see [docs/03-xrtpipeline.md](docs/03-xrtpipeline.md)
 
-Run the Swift XRT pipeline to produce cleaned level-2 event files:
+In the HEASoft terminal:
 
 ```bash
-# Process all OBSIDs (sequential)
-xrt_pipeline.py --batch --indir XRT_input --outdir XRT_output \
-    --ra 187.2779 --dec 2.0524
-
-# Process in parallel (16 workers)
 xrt_pipeline.py --batch --nproc 16 --indir XRT_input --outdir XRT_output \
     --ra 187.2779 --dec 2.0524
 ```
@@ -237,13 +232,13 @@ Name resolution tries SIMBAD, NED, CDS Sesame, and astroquery in sequence. Archi
 
 ### `xrt_pipeline.py`
 
-Run the HEASoft `xrtpipeline` task on raw Swift XRT data to produce cleaned level-2 event files, exposure maps, and auxiliary products. Supports single-OBSID, sequential batch, and parallel batch modes.
+Run the HEASoft `xrtpipeline` task on raw Swift XRT data to produce cleaned level-2 event files and exposure maps. Supports single-OBSID, sequential batch, and parallel batch modes. Details: [docs/03-xrtpipeline.md](docs/03-xrtpipeline.md).
 
 ```
 Usage:
     # Single OBSID
-    xrt_pipeline.py --indir /path/to/00035017001 \
-        --outdir /path/to/output/00035017001 --ra 187.2779 --dec 2.0524
+    xrt_pipeline.py --indir XRT_input/00035017001 \
+        --outdir XRT_output/00035017001 --ra 187.2779 --dec 2.0524
 
     # Batch: all OBSIDs under input directory
     xrt_pipeline.py --batch --indir XRT_input --outdir XRT_output \
@@ -254,21 +249,25 @@ Usage:
         --outdir XRT_output --ra 187.2779 --dec 2.0524
 
 Key options:
-    --batch         Process all OBSID subdirs under --indir
-    --nproc         Number of parallel workers (default: 1)
-    --createexpomap Create exposure maps (default: yes)
-    --cleanup       Remove intermediate files (default: no)
-    --clobber       Overwrite existing output (default: yes)
+    --batch            Process all OBSID subdirs under --indir
+    --nproc            Number of parallel workers (default: 1)
+    --timeout          Per-OBSID time limit in seconds (default: 600)
+    --createexpomap    Create exposure maps (default: yes)
+    --extractproducts  Also run xrtproducts (default: no; unused downstream)
+    --cleanup          Remove intermediate files (default: no)
+    --clobber          Overwrite existing output (default: yes)
 
-Output (per OBSID):
-    Cleaned event files for all modes (PC, WT) and observation
-    types (slew, settling, pointed), exposure maps, attitude
-    files, housekeeping files.
+Output (per OBSID, in <outdir>/<OBSID>/):
+    Cleaned event files (*_cl.evt) for all modes (PC, WT) and
+    segments (pointed, settling, slew), exposure maps (*_ex.img),
+    intermediate files, and xrtpipeline_<OBSID>.log.
 
-Requires: HEASoft (xrtpipeline), CALDB
+Exit status: 0 only if every OBSID succeeded.
+
+Requires: HEASoft (xrtpipeline), CALDB; run in a HEASoft terminal
 ```
 
-Each `xrtpipeline` call processes everything within an OBSID — all modes and observation types — producing separate cleaned event files for each. Per-OBSID log files are written to the output directory. In parallel mode, the environment (HEASoft, CALDB paths) is explicitly propagated to worker processes.
+Each `xrtpipeline` call processes everything within an OBSID — all modes and observation types — producing separate cleaned event files for each. Each run gets a private parameter-file folder and its own pseudo-terminal, so parallel batches don't collide and also run under `nohup` or `cron`. An OBSID counts as OK only if `xrtpipeline` exits 0 and leaves a cleaned event file and exposure map for each mode with pointed data.
 
 ### `swift_xrt_summary.py`
 

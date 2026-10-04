@@ -85,18 +85,20 @@ def get_obs_id(data_path: Path) -> Optional[str]:
 # ---------------------------------------------------------------
 
 def verify_level2_products(output_path: Path, input_path: Path,
-                           obs_id: str) -> dict:
+                           obs_id: str, createexpomap: str = 'yes') -> dict:
     """
     Check the OUTPUT directory for the cleaned Level-2 products that
-    downstream tools actually consume: the cleaned event file
-    (``*_cl.evt``) and exposure map (``*_ex.img``) for each observing
-    mode. Window modes (w1-w4) are wild-carded since the XRT
-    auto-selects them based on count rate.
+    downstream tools actually consume: the pointed cleaned event file
+    (``*po_cl.evt``) and exposure map (``*po_ex.img``, unless
+    ``createexpomap`` is 'no') for each observing mode. Window modes
+    (w1-w4) are wild-carded since the XRT auto-selects them based on
+    count rate.
 
-    The check is *mode-aware*: only the modes actually present in the
-    INPUT observation (PC and/or WT) are verified, so a PC-only or
-    WT-only observation no longer reports the absent mode as
-    ``[MISSING]``.
+    The check is *mode-aware*: only the modes with pointed (``po``)
+    data in the INPUT observation are verified. Settling and slew
+    segments don't count: PC-only observations often have WT settling
+    data (3C 273's 073 and 074 do), and expecting pointed WT products
+    from that reported them as ``[MISSING]``.
 
     NB: the attitude file (``sw<OBSID>sat.fits.gz``) and housekeeping
     files (``xrt/hk/*.hk``) are pipeline *inputs* that live in the
@@ -107,21 +109,21 @@ def verify_level2_products(output_path: Path, input_path: Path,
     with a non-zero exit if either input is absent, so a post-run check
     for them was both misplaced and redundant.
     """
-    # Detect which modes the observation actually contains from the
-    # raw input event files (e.g. sw<obsid>xpcw3po*.evt*,
-    # sw<obsid>xwtw2po*.evt*).
+    # Detect which modes have pointed data from the raw input event
+    # files (e.g. sw<obsid>xpcw3po_uf.evt.gz, sw<obsid>xwtw2po_uf.evt.gz).
     modes = []
-    if list(input_path.glob(f'**/sw{obs_id}xpc*.evt*')):
+    if list(input_path.glob(f'**/sw{obs_id}xpc*po*.evt*')):
         modes.append('pc')
-    if list(input_path.glob(f'**/sw{obs_id}xwt*.evt*')):
+    if list(input_path.glob(f'**/sw{obs_id}xwt*po*.evt*')):
         modes.append('wt')
 
     expected = {}
     for m in modes:
         expected[f'cleaned_{m}_evt'] = list(output_path.glob(
             f'**/*{obs_id}x{m}*po_cl.evt*'))
-        expected[f'exposure_map_{m}'] = list(output_path.glob(
-            f'**/*{obs_id}x{m}*po_ex.img*'))
+        if createexpomap == 'yes':
+            expected[f'exposure_map_{m}'] = list(output_path.glob(
+                f'**/*{obs_id}x{m}*po_ex.img*'))
 
     return {k: ([f.name for f in v] if v else None)
             for k, v in expected.items()}
@@ -233,6 +235,27 @@ def _write_run_log(log_file, obs_id, cmd_str, returncode,
             f.write(stderr)
 
 
+def _diagnostic_tail(output: str, n: int = 15) -> str:
+    """
+    The last ``n`` informative lines of xrtpipeline's output.
+
+    xrtpipeline prints its errors to stdout and ends every run, failed
+    or not, with rows of '=' around a request to acknowledge XRTDAS. A
+    plain tail is mostly that banner (the batch summary's last two
+    lines were nothing but '=' rows), so drop the banner and the '='
+    and '-' rule and header lines and let the tail end at the error.
+    """
+    lines = output.strip().splitlines()
+    for i in range(len(lines) - 1, -1, -1):
+        if 'If the XRTDAS software was helpful' in lines[i]:
+            lines = lines[:i]
+            break
+    lines = [line for line in lines
+             if line.strip()
+             and not line.lstrip().startswith(('==', '--'))]
+    return "\n".join(lines[-n:])
+
+
 # ---------------------------------------------------------------
 # Run xrtpipeline on a single OBSID
 # ---------------------------------------------------------------
@@ -339,6 +362,9 @@ def run_pipeline(
         srcra=srcra,
         srcdec=srcdec,
         createexpomap=createexpomap,
+        # xrtpipeline's useexpomap defaults to yes and then errors out
+        # when no map was made, so createexpomap=no needs it off too.
+        useexpomap=createexpomap,
         extractproducts=extractproducts,
         cleanup=cleanup,
         clobber=clobber,
@@ -396,6 +422,15 @@ def run_pipeline(
         result['reason'] = f"timeout after {timeout} seconds"
     elif returncode != 0:
         result['reason'] = f"exit code {returncode}"
+    else:
+        # Verify products (only meaningful on a successful run). An
+        # exit 0 without them would drop the OBSID from every later
+        # step unnoticed, so it counts as a failure.
+        result['products'] = verify_level2_products(
+            output_path, data_path, obs_id, createexpomap)
+        missing = [k for k, v in result['products'].items() if not v]
+        if missing:
+            result['reason'] = f"exit 0 but no {', '.join(missing)}"
     result['success'] = result['reason'] is None
 
     # Always write the full log (stdout + stderr verbatim, never
@@ -406,8 +441,8 @@ def run_pipeline(
 
     if not result['success']:
         # Surface the real diagnostic instead of burying it in the log.
-        diag = stderr.strip() or stdout.strip()
-        result['stderr_tail'] = "\n".join(diag.splitlines()[-15:])
+        result['stderr_tail'] = _diagnostic_tail(
+            stderr if stderr.strip() else stdout)
         if not quiet:
             print(f"  [FAILED]  {obs_id} ({result['reason']})")
             if result['stderr_tail']:
@@ -420,18 +455,9 @@ def run_pipeline(
 
     if not quiet:
         print(f"  [SUCCESS] {obs_id} ({result['elapsed_s']:.0f}s)")
-
-    # Verify products (only meaningful on a successful run).
-    products = verify_level2_products(output_path, data_path, obs_id)
-    result['products'] = products
-
-    if not quiet:
-        for product_type, filenames in products.items():
-            if filenames:
-                for fn in filenames:
-                    print(f"  [FOUND]   {product_type:<20s} {fn}")
-            else:
-                print(f"  [MISSING] {product_type}")
+        for product_type, filenames in result['products'].items():
+            for fn in filenames:
+                print(f"  [FOUND]   {product_type:<20s} {fn}")
 
     return result
 
@@ -668,7 +694,7 @@ def main():
     )
 
     if args.batch:
-        batch_run_pipeline(
+        results = batch_run_pipeline(
             root_input_dir=args.indir,
             root_output_dir=args.outdir,
             srcra=args.ra,
@@ -676,6 +702,11 @@ def main():
             nproc=args.nproc,
             **kwargs,
         )
+        # Non-zero if any OBSID failed, or none were found, so a
+        # partial batch can't pass for a complete one in a script.
+        ok = bool(results) and all(r['success']
+                                   for r in results.values())
+        sys.exit(0 if ok else 1)
     else:
         result = run_pipeline(
             data_path=args.indir,
