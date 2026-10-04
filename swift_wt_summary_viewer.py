@@ -40,6 +40,7 @@ import numpy as np
 try:
     from astropy.io import fits
     from astropy.time import Time
+    from astropy.wcs import WCS
 except ImportError:
     print("ERROR: astropy is required.")
     sys.exit(1)
@@ -151,22 +152,17 @@ def get_wt_metadata(filepath):
             info['date_mid'] = info.get('date_obs', 'N/A')
             info['mjd_mid'] = None
 
-        # WCS for sky X column
+        # WCS of the sky X/Y columns
         tfields = header.get('TFIELDS', 0)
-        x_col = None
-        for ci in range(1, tfields + 1):
-            ttype = header.get(f'TTYPE{ci}', '').strip().upper()
-            if ttype == 'X':
-                x_col = ci
-                break
-
-        if x_col:
-            info['tcrvl_x'] = header.get(f'TCRVL{x_col}', 0)
-            info['tcrpx_x'] = header.get(f'TCRPX{x_col}', 500)
-            info['tcdlt_x'] = header.get(f'TCDLT{x_col}',
-                                          -0.0006548089)
-            info['plate_scale'] = abs(info['tcdlt_x']) * 3600
+        cols = {header.get(f'TTYPE{ci}', '').strip().upper(): ci
+                for ci in range(1, tfields + 1)}
+        x_col, y_col = cols.get('X'), cols.get('Y')
+        if x_col and y_col:
+            info['wcs'] = column_wcs(header, x_col, y_col)
+            info['plate_scale'] = abs(header.get(
+                f'TCDLT{x_col}', -0.0006548089)) * 3600
         else:
+            info['wcs'] = None
             info['plate_scale'] = 2.36
 
         # Read all coordinate columns
@@ -204,21 +200,39 @@ def get_wt_metadata(filepath):
 # Find source position in sky coordinates
 # ---------------------------------------------------------------
 
+def column_wcs(header, x_col, y_col):
+    """
+    Celestial WCS of an event file's sky X/Y columns (a TAN
+    projection), for converting the source RA/Dec to sky pixels.
+
+    The position used to come from a linear (RA - TCRVL) / TCDLT for X,
+    which misses the cos(Dec) factor, and the median Y of events in
+    that column. Fine for 3C 273 at Dec +2; for 1ES 1959+650 at Dec +65
+    it landed 146 px from a 10.8 ct/s source, which was then reported
+    as not detected and excluded from the master table.
+    """
+    w = WCS(naxis=2)
+    w.wcs.ctype = [header.get(f'TCTYP{x_col}', 'RA---TAN'),
+                   header.get(f'TCTYP{y_col}', 'DEC--TAN')]
+    w.wcs.crval = [header.get(f'TCRVL{x_col}', 0.0),
+                   header.get(f'TCRVL{y_col}', 0.0)]
+    w.wcs.crpix = [header.get(f'TCRPX{x_col}', 500.5),
+                   header.get(f'TCRPX{y_col}', 500.5)]
+    w.wcs.cdelt = [header.get(f'TCDLT{x_col}', -0.0006548089),
+                   header.get(f'TCDLT{y_col}', 0.0006548089)]
+    return w
+
+
 def find_sky_position(x_events, y_events, ra_src, dec_src, info):
     """
     Convert RA/Dec to sky pixel coordinates and refine by
     finding the event centroid nearby.
     """
-    # WCS conversion
-    x_guess = info['tcrpx_x'] + \
-        (ra_src - info['tcrvl_x']) / info['tcdlt_x']
-    # For Y, find the column
-    # Approximate: use centroid of events near x_guess
-    near_x = np.abs(x_events - x_guess) < 15
-    if np.sum(near_x) > 5:
-        y_guess = np.median(y_events[near_x])
+    if info.get('wcs') is not None:
+        x_guess, y_guess = info['wcs'].wcs_world2pix(
+            [[ra_src, dec_src]], 1)[0]
     else:
-        y_guess = np.median(y_events)
+        x_guess, y_guess = np.median(x_events), np.median(y_events)
 
     # Refine centroid iteratively
     xc, yc = x_guess, y_guess
@@ -370,8 +384,9 @@ def make_combined_plot(stem, x_events, y_events, detx_events,
         ax2.text(0.5, 0.5, 'No DETX data', transform=ax2.transAxes,
                  ha='center', va='center', fontsize=14)
 
-    ax2.set_xlabel('DETX offset from peak (pixels)')
-    ax2.set_ylabel('Counts per pixel')
+    ax2.set_xlabel('DETX offset from peak (pixels)', color='white')
+    ax2.set_ylabel('Counts per pixel', color='white')
+    ax2.tick_params(colors='white', which='both')   # black page behind
 
     # Title
     from math import floor, log10
@@ -550,8 +565,8 @@ def write_wt_info(obsid_path, stem, info, xc, yc,
         f.write(f"bkg_inner_pix = {bkg_inner}\n")
         f.write(f"bkg_outer_pix = {bkg_outer}\n\n")
         f.write(f"# BACKSCAL values for WT mode (1D extent):\n")
-        f.write(f"# These must be manually set in grppha if\n")
-        f.write(f"# XSELECT's auto-values are incorrect.\n")
+        f.write(f"# swift_xrt_extract_spectra.py writes these into\n")
+        f.write(f"# the spectra in place of XSELECT's 2D values.\n")
         f.write(f"backscal_src = {backscal_src}\n")
         f.write(f"backscal_bkg = {backscal_bkg}\n\n")
         f.write(f"# Source detection (read by make_wt_master_table.py):\n")
