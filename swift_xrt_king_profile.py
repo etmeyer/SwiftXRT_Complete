@@ -26,8 +26,17 @@ Optional arguments:
     --sigma     Sigma threshold, 2 consecutive bins (default: 3.0)
     --sigma2    Sigma threshold, single bin (default: 4.0)
     --sbthresh  Pile-up surface-brightness threshold, counts per frame
-                per arcmin^2 (default: 4.0)
+                per arcmin^2 (default: 4.5)
     --pdf       Output PDF filename (default: king_profiles.pdf)
+
+Exposure correction:
+    Each ring of the profile is divided by its exposed area, from the
+    xrtpipeline exposure map ({stem}_ex.img), so bad columns and hot
+    pixels crossing the source don't remove counts from some rings.
+    Uncorrected, they made the 12-20" rings of the 3C 273 profiles
+    differ from the model by +34% to -10% from one observation to the
+    next, and left the fitted S0 up to 24% low. Without a usable
+    exposure map the geometric ring area is used, with a warning.
 
 Pile-up radius:
     The radius is where the King profile fitted to the wings -- which
@@ -42,17 +51,13 @@ Pile-up radius:
     five well-exposed 3C 273 PC observations (2.3-3.6 ct/s), spectra
     were extracted with inner radii of 0-28" and fit: the 1 keV flux
     rises with the inner radius until the piled-up core is excluded,
-    then levels off, at 10-16". At 4.0 the radius lies 1-5" outside
-    that point for all five.
+    then levels off, at 10-16". At 4.5 the radius lies 1.5-5.4" outside
+    that point for all five (4.9 is the most that keeps 1" for all).
 
     The residual flags (--sigma, --sigma2) are kept as a diagnostic in
-    the plot and _pileup.txt but no longer choose the radius. They
-    mislead both ways: outside the pile-up, the 12-20" rings differ from
-    the model by +34% to -10% from one observation to the next (the
-    King shape isn't exact and the profile isn't corrected for bad
-    columns), which thousands of counts make 4-6 sigma. They gave
-    20-24" where 10-14" suffices, and an off-axis source 10" where its
-    flux was still 17% low.
+    the plot and _pileup.txt but don't choose the radius: before the
+    exposure correction they gave 20-24" where 10-14" suffices, and an
+    off-axis source 10" where its flux was still 17% low.
 
 Optional override file:
     If a file named 'pileup_overrides.txt' exists in the working
@@ -190,9 +195,14 @@ def refine_centroid(x_events, y_events, x0, y0, search_radius_pix,
 # ---------------------------------------------------------------
 
 def extract_radial_profile(x_events, y_events, xc, yc, plate_scale,
-                           rbin_arcsec, rmax_arcsec, exposure):
+                           rbin_arcsec, rmax_arcsec, exposure,
+                           ring_area=None):
     """
     Compute azimuthally-averaged surface brightness profile.
+
+    ring_area : exposed area of each ring in arcmin^2 (from
+                ring_exposed_area); without it, the geometric area is
+                used, as if every pixel had the full exposure.
 
     Returns:
         r_mid     : bin centers (arcsec)
@@ -221,6 +231,8 @@ def extract_radial_profile(x_events, y_events, xc, yc, plate_scale,
         # Annular area in arcmin^2 (divide arcsec^2 by 3600)
         area_arcsec2 = np.pi * (r_out ** 2 - r_in ** 2)
         area_arcmin2 = area_arcsec2 / 3600.0
+        if ring_area is not None:
+            area_arcmin2 = ring_area[i]
 
         # Count events in this annular bin
         mask = (dist_arcsec >= r_in) & (dist_arcsec < r_out)
@@ -236,6 +248,61 @@ def extract_radial_profile(x_events, y_events, xc, yc, plate_scale,
             sb_err[i] = 0
 
     return r_mid, sb, sb_err, counts
+
+
+def find_exposure_map(evt_path):
+    """The xrtpipeline exposure map for an event file, or None."""
+    base = evt_path.replace('_cl.evt.gz', '').replace('_cl.evt', '')
+    for candidate in (base + '_ex.img', base + '_ex.img.gz'):
+        if os.path.exists(candidate):
+            return candidate
+    return None
+
+
+def ring_exposed_area(expo_path, evt_header, x_col, y_col, xc, yc,
+                      plate_scale, rbin, rmax):
+    """
+    Exposed area of each radial ring, in arcmin^2, from the xrtpipeline
+    exposure map: the area of the sky pixels whose centres fall in the
+    ring -- where the events, which sit on pixel centres, are counted --
+    each weighted by its exposure relative to the full exposure. Bad
+    columns and hot pixels have little or no exposure, so a bad column
+    crossing the source no longer reads as a dip (or, through the wing
+    fit, a bump) in the profile.
+
+    Returns None if the map is not on the events' sky-pixel grid.
+    """
+    with fits.open(expo_path) as hdul:
+        img = hdul[0].data
+        ihdr = hdul[0].header
+    for axis, col in ((1, x_col), (2, y_col)):
+        same_grid = (
+            np.isclose(ihdr.get(f'CRPIX{axis}', np.nan),
+                       evt_header.get(f'TCRPX{col}', np.nan))
+            and np.isclose(ihdr.get(f'CRVAL{axis}', np.nan),
+                           evt_header.get(f'TCRVL{col}', np.nan),
+                           rtol=0, atol=1e-6)
+            and np.isclose(ihdr.get(f'CDELT{axis}', np.nan),
+                           evt_header.get(f'TCDLT{col}', np.nan),
+                           rtol=1e-6, atol=0))
+        if not same_grid:
+            return None
+    full = float(np.max(img))
+    if not full > 0:
+        return None
+
+    # Only the pixels around the source matter.
+    half = int(np.ceil(rmax / plate_scale)) + 2
+    x0 = max(int(round(xc)) - half, 1)
+    x1 = min(int(round(xc)) + half, img.shape[1])
+    y0 = max(int(round(yc)) - half, 1)
+    y1 = min(int(round(yc)) + half, img.shape[0])
+    yy, xx = np.mgrid[y0:y1 + 1, x0:x1 + 1]       # 1-based sky pixels
+    r = np.hypot(xx - xc, yy - yc) * plate_scale
+    weight = img[y0 - 1:y1, x0 - 1:x1] / full
+    edges = np.arange(0, rmax + rbin, rbin)
+    return (np.histogram(r, edges, weights=weight)[0]
+            * (plate_scale / 60.0) ** 2)
 
 
 # ---------------------------------------------------------------
@@ -388,7 +455,7 @@ def make_profile_plot(obsid, evt_stem, r_mid, sb, sb_err, popt, pcov,
                       mask_fit, rmin_fit, rmax_fit, rmax_plot, exposure,
                       n_events, window_info, sigma1, sigma2,
                       pileup_radius, override_radius, flag_level,
-                      output_png):
+                      output_png, exposure_corrected=False):
     """
     Create the radial profile plot with King fit overlay.
     """
@@ -432,7 +499,8 @@ def make_profile_plot(obsid, evt_stem, r_mid, sb, sb_err, popt, pcov,
                  fontfamily='monospace')
 
     ax1.set_yscale('log')
-    ax1.set_ylabel('Surface Brightness (cts/s/arcmin$^2$)')
+    ax1.set_ylabel('Surface Brightness (cts/s/arcmin$^2$)'
+                   + (', exposure-corrected' if exposure_corrected else ''))
     count_rate = n_events / exposure if exposure > 0 else 0
     # Round to 3 significant figures
     if count_rate > 0:
@@ -541,7 +609,7 @@ def make_profile_plot(obsid, evt_stem, r_mid, sb, sb_err, popt, pcov,
 def process_event_file(filepath, ra_src, dec_src, rmin_fit, rmax_fit,
                        rbin, rmax_plot, centroid_radius, rc_fixed,
                        beta_fixed, sigma1, sigma2, obsid, output_dir,
-                       overrides, sb_thresh=4.0):
+                       overrides, sb_thresh=4.5):
     """
     Process one PC mode event file: centroid, extract profile, fit, plot.
 
@@ -627,10 +695,30 @@ def process_event_file(filepath, ra_src, dec_src, rmin_fit, rmax_fit,
             print(f"    Refined centroid (pix): ({xc:.2f}, {yc:.2f}), "
                   f"shift: {shift:.2f} arcsec")
 
+            # Divide each ring by its exposed area, so bad columns
+            # crossing the source don't distort the profile.
+            expo_path = find_exposure_map(filepath)
+            ring_area = None
+            if expo_path and x_col and y_col:
+                ring_area = ring_exposed_area(
+                    expo_path, header, x_col, y_col, xc, yc,
+                    plate_scale, rbin, rmax_plot)
+            if ring_area is not None:
+                edges = np.arange(0, rmax_plot + rbin, rbin)
+                wing = (edges[1:] > rmin_fit) & (edges[:-1] < rmax_fit)
+                geo = np.pi * np.diff(edges ** 2) / 3600.0
+                unexposed = 1 - ring_area[wing].sum() / geo[wing].sum()
+                print(f"    Exposure map: {os.path.basename(expo_path)} "
+                      f"({100 * max(unexposed, 0):.0f}% of the "
+                      f"{rmin_fit:g}-{rmax_fit:g}\" area unexposed)")
+            else:
+                print("    WARNING: no usable exposure map; the profile "
+                      "is not corrected for bad columns.")
+
             # Extract radial profile out to max plotting radius
             r_mid, sb, sb_err, counts = extract_radial_profile(
                 x_events, y_events, xc, yc, plate_scale,
-                rbin, rmax_plot, exposure)
+                rbin, rmax_plot, exposure, ring_area)
 
             total_cts = np.sum(counts)
             print(f"    Events within {rmax_plot}\": {total_cts}")
@@ -689,7 +777,8 @@ def process_event_file(filepath, ra_src, dec_src, rmin_fit, rmax_fit,
                               mask_fit, fit_rmin, rmax_fit, rmax_plot,
                               exposure, len(x_events), window_info,
                               sigma1, sigma2, pileup_radius,
-                              override_radius, flag_level, output_png)
+                              override_radius, flag_level, output_png,
+                              exposure_corrected=ring_area is not None)
             print(f"    Saved: {output_png}")
 
             # Write pile-up radius to text file
@@ -727,6 +816,10 @@ def process_event_file(filepath, ra_src, dec_src, rmin_fit, rmax_fit,
                            f"counts/frame/arcmin^2\n")
                 ftxt.write(f"wing_fit_range_arcsec = "
                            f"{fit_rmin:g}-{rmax_fit:g}\n")
+                ftxt.write(f"exposure_map = "
+                           + (os.path.basename(expo_path) if ring_area
+                              is not None else "none (profile not "
+                              "corrected for bad columns)") + "\n")
                 if s0_frac_err is not None:
                     ftxt.write(f"s0_fractional_error = "
                                f"{s0_frac_err:.3f}\n")
@@ -839,11 +932,11 @@ def main():
                         help='Higher sigma threshold for pile-up, '
                              'single bin sufficient '
                              '(default: 4.0)')
-    parser.add_argument('--sbthresh', type=float, default=4.0,
+    parser.add_argument('--sbthresh', type=float, default=4.5,
                         help='Pile-up surface-brightness threshold in '
                              'counts/frame/arcmin^2; the pile-up radius '
                              'is where the fitted profile falls below it '
-                             '(default: 4.0)')
+                             '(default: 4.5)')
     parser.add_argument('--pdf', type=str, default='king_profiles.pdf',
                         help='Output multi-page PDF filename '
                              '(default: king_profiles.pdf)')
