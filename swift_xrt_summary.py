@@ -4,13 +4,17 @@ swift_xrt_summary.py
 
 Crawl subdirectories (named by Swift OBSID) in the current working directory,
 find all cleaned level-2 XRT event files (*_cl.evt), and produce a summary
-table showing the mode sequence, start/end times, and exposure for each.
+table showing the target, pointing offset, mode sequence, start/end times,
+and exposure for each.
 
 Usage:
     python swift_xrt_summary.py
+    python swift_xrt_summary.py --compact --ra 187.2779 --dec 2.0524
 
     Run from the directory that contains OBSID subdirectories. The script
     searches recursively for *_cl.evt files within each OBSID directory.
+    Pointing offsets are measured from --ra/--dec if given, otherwise from
+    each observation's own target position (RA_OBJ/DEC_OBJ).
 
 Requirements:
     astropy (for FITS header reading)
@@ -19,6 +23,7 @@ Requirements:
 import os
 import sys
 import glob
+import math
 import re
 import argparse
 from collections import defaultdict
@@ -28,6 +33,15 @@ try:
 except ImportError:
     print("ERROR: astropy is required. Install with: pip install astropy")
     sys.exit(1)
+
+
+def separation_arcmin(ra1, dec1, ra2, dec2):
+    """Angular separation in arcmin between two positions in degrees."""
+    ra1, dec1, ra2, dec2 = map(math.radians, (ra1, dec1, ra2, dec2))
+    # Haversine form, accurate at the arcminute scales of interest here
+    h = (math.sin((dec2 - dec1) / 2) ** 2
+         + math.cos(dec1) * math.cos(dec2) * math.sin((ra2 - ra1) / 2) ** 2)
+    return math.degrees(2 * math.asin(math.sqrt(h))) * 60.0
 
 
 def identify_mode(filename):
@@ -92,6 +106,13 @@ def get_event_info(filepath):
             info['exposure'] = header.get('EXPOSURE', 0.0)
             info['datamode'] = header.get('DATAMODE', 'N/A')
             info['obs_id'] = header.get('OBS_ID', 'N/A')
+
+            # Target name and positions, for the pointing offset
+            info['object'] = str(header.get('OBJECT', 'N/A')).strip()
+            info['ra_pnt'] = header.get('RA_PNT')
+            info['dec_pnt'] = header.get('DEC_PNT')
+            info['ra_obj'] = header.get('RA_OBJ')
+            info['dec_obj'] = header.get('DEC_OBJ')
 
             # Get number of events (rows in the EVENTS table)
             info['nevents'] = header.get('NAXIS2', 0)
@@ -158,14 +179,38 @@ def format_exposure(seconds):
         return f"{seconds:.1f}s ({seconds/3600:.2f}h)"
 
 
-def print_obsid_table(obsid, file_infos):
+def pointing_summary(file_infos, ref=None):
+    """
+    Target name and pointing offset (arcmin) for one OBSID.
+
+    The offset is the angle between where Swift pointed (RA_PNT/DEC_PNT)
+    and ``ref`` (the --ra/--dec position) or, without one, the
+    observation's own target (RA_OBJ/DEC_OBJ). A large offset puts the
+    source far off-axis; in WT mode, more than ~4' can put it outside
+    the 8'-wide window, as for 3C 273 OBSID 00035017041 (5.1').
+    Returns (target, offset), with offset None if a position is missing.
+    """
+    pointed = [fi for fi in file_infos if 'POINTED' in fi['mode']]
+    info = (pointed or file_infos)[0]
+    if ref is None:
+        ref = (info.get('ra_obj'), info.get('dec_obj'))
+    pnt = (info.get('ra_pnt'), info.get('dec_pnt'))
+    if None in ref or None in pnt:
+        return info.get('object', 'N/A'), None
+    return info.get('object', 'N/A'), separation_arcmin(*pnt, *ref)
+
+
+def print_obsid_table(obsid, file_infos, ref=None, ref_label='target'):
     """Print a formatted table for a single OBSID."""
     # Sort by start time
     file_infos.sort(key=lambda x: x['date_obs'])
 
     # Header
+    target, offset = pointing_summary(file_infos, ref)
+    off_str = f"{offset:.1f}'" if offset is not None else 'N/A'
     print(f"\n{'='*100}")
-    print(f"  OBSID: {obsid}")
+    print(f"  OBSID: {obsid}    Target: {target}    "
+          f"Pointing offset: {off_str} from {ref_label}")
     print(f"{'='*100}")
 
     # Column headers
@@ -232,11 +277,12 @@ def print_obsid_table(obsid, file_infos):
                   f"({info['exposure']:.1f}s)")
 
 
-def get_compact_row(obsid, file_infos):
+def get_compact_row(obsid, file_infos, ref=None):
     """
     Summarize a single OBSID into a compact row dict.
     """
     file_infos.sort(key=lambda x: x['date_obs'])
+    target, offset = pointing_summary(file_infos, ref)
 
     total_exposure = sum(fi['exposure'] for fi in file_infos)
     date_start = file_infos[0]['date_obs']
@@ -305,22 +351,31 @@ def get_compact_row(obsid, file_infos):
         'pc_exp_ks': pc_exp / 1000.0,
         'sequence': sequence,
         'max_orbits': max_orbits,
+        'offset': offset,
+        'target': target,
     }
 
 
-def print_compact_table(rows):
+def print_compact_table(rows, ref_label='target', no_files=()):
     """Print the compact one-row-per-OBSID table."""
-    # Column headers
+    # Column headers. Target goes last: names like
+    # SDSSJ122933.69+015810.4 are too long for a fixed-width column.
+    off_hdr = "Off(')"
+    tw = max(len('Target'), max(len(r['target']) for r in rows))
     hdr = (f"  {'OBSID':<14} {'Date/Time':<22} {'Total(ks)':>10} {'ct/s':>8} "
            f"{'Slew_i':>7} {'Slew_f':>7} {'N_WT':>5} {'N_PC':>5} "
-           f"{'WT_exp(ks)':>11} {'PC_exp(ks)':>11} {'Orb':>4} {'Seq':>6}")
+           f"{'WT_exp(ks)':>11} {'PC_exp(ks)':>11} {'Orb':>4} {'Seq':>6} "
+           f"{off_hdr:>6}  {'Target':<{tw}}")
     sep = (f"  {'-'*14} {'-'*22} {'-'*10} {'-'*8} "
-           f"{'-'*7} {'-'*7} {'-'*5} {'-'*5} {'-'*11} {'-'*11} {'-'*4} {'-'*6}")
+           f"{'-'*7} {'-'*7} {'-'*5} {'-'*5} {'-'*11} {'-'*11} {'-'*4} {'-'*6} "
+           f"{'-'*6}  {'-'*tw}")
+    width = len(hdr)
 
-    print(f"\n{'='*122}")
+    print(f"\n{'='*width}")
     print(f"  COMPACT SUMMARY")
     print(f"  Sequence codes: 1=WT_SLEW  2=PC_SLEW  3=WT_SETTLING  4=PC_SETTLING  5=WT_POINTED  6=PC_POINTED")
-    print(f"{'='*122}")
+    print(f"  Off(') = pointing offset in arcmin from {ref_label}")
+    print(f"{'='*width}")
     print(hdr)
     print(sep)
 
@@ -329,11 +384,13 @@ def print_compact_table(rows):
     total_pc_exp = 0.0
 
     for r in rows:
+        off = f"{r['offset']:.1f}" if r['offset'] is not None else 'N/A'
         print(f"  {r['obsid']:<14} {r['date_start']:<22} {r['total_exp_ks']:>10.3f} "
               f"{r['total_cts_per_s']:>8.2f} "
               f"{r['slew_start']:>7} {r['slew_end']:>7} {r['n_wt_pointed']:>5} "
               f"{r['n_pc']:>5} {r['wt_pointed_exp_ks']:>11.3f} "
-              f"{r['pc_exp_ks']:>11.3f} {r['max_orbits']:>4} {r['sequence']:>6}")
+              f"{r['pc_exp_ks']:>11.3f} {r['max_orbits']:>4} {r['sequence']:>6} "
+              f"{off:>6}  {r['target']}")
         total_exp += r['total_exp_ks']
         total_wt_exp += r['wt_pointed_exp_ks']
         total_pc_exp += r['pc_exp_ks']
@@ -343,7 +400,12 @@ def print_compact_table(rows):
           f"{'':>8} "
           f"{'':>7} {'':>7} {'':>5} {'':>5} {total_wt_exp:>11.3f} "
           f"{total_pc_exp:>11.3f}")
-    print(f"{'='*122}")
+    print(f"{'='*width}")
+    # An OBSID whose Step 3 failed has no cleaned files; say so rather
+    # than leave it silently missing from the table.
+    if no_files:
+        print(f"  Not in the table (no cleaned event files): "
+              f"{', '.join(no_files)}")
 
 
 def main():
@@ -351,7 +413,17 @@ def main():
         description='Summarize Swift XRT cleaned event files across OBSID directories.')
     parser.add_argument('--compact', action='store_true',
                         help='Output a single-row-per-OBSID summary table')
+    parser.add_argument('--ra', type=float, default=None,
+                        help='Source RA in decimal degrees; pointing '
+                             'offsets are measured from --ra/--dec '
+                             '(default: from each observation\'s target)')
+    parser.add_argument('--dec', type=float, default=None,
+                        help='Source Dec in decimal degrees')
     args = parser.parse_args()
+    if (args.ra is None) != (args.dec is None):
+        parser.error('give --ra and --dec together')
+    ref = (args.ra, args.dec) if args.ra is not None else None
+    ref_label = '--ra/--dec' if ref else 'target'
 
     script_dir = os.getcwd()
 
@@ -373,6 +445,7 @@ def main():
     grand_total_events = 0
     obsids_processed = 0
     compact_rows = []
+    no_files = []
 
     for obsid in obsid_dirs:
         obsid_path = os.path.join(script_dir, obsid)
@@ -383,6 +456,7 @@ def main():
         cl_files += glob.glob(os.path.join(obsid_path, '**', '*_cl.evt.gz'), recursive=True)
 
         if not cl_files:
+            no_files.append(obsid)
             if not args.compact:
                 print(f"\n  OBSID {obsid}: No cleaned event files found.")
             continue
@@ -396,17 +470,19 @@ def main():
 
         if file_infos:
             if args.compact:
-                compact_rows.append(get_compact_row(obsid, file_infos))
+                compact_rows.append(get_compact_row(obsid, file_infos, ref))
             else:
-                print_obsid_table(obsid, file_infos)
+                print_obsid_table(obsid, file_infos, ref, ref_label)
 
             obsids_processed += 1
             grand_total_exposure += sum(fi['exposure'] for fi in file_infos)
             grand_total_events += sum(fi['nevents'] for fi in file_infos)
+        else:
+            no_files.append(obsid)
 
     if args.compact:
         if compact_rows:
-            print_compact_table(compact_rows)
+            print_compact_table(compact_rows, ref_label, no_files)
         else:
             print("\nNo cleaned event files found in any OBSID directory.")
     else:
