@@ -133,10 +133,9 @@ profile. Above, in an observation of the blazar 1ES 1959+650, one sits right
 beside the peak and another about 22 columns out.
 
 Step 7's ARF uses the exposure map to correct the flux for the counts lost
-there. When a bad column cuts the core, the correction is large: here it
-halved the effective area compared with another observation of the same
-source. Note such observations in the comment column, and compare their
-fluxes with their neighbours in the light curve.
+there. Here it lowers the effective area by 23%, matching the 24% of the
+source's exposure that the bad column removes. A correction that size is
+worth a note in the comment column.
 
 ### What `_wt_profile.txt` records
 
