@@ -236,7 +236,8 @@ def fit_spectrum(grp_pha, nh_gal, redshift, gamma_value,
       pl.PhoIndex  = gamma_value (free or frozen)
       pl.norm      = 1e-3      (free)
 
-    Returns dict with fit results, or None on failure.
+    Returns dict with fit results, 'skipped' if there are too few
+    noticed bins to fit, or None on failure.
     """
     results = {
         'gamma': None, 'gamma_err': None,
@@ -321,9 +322,10 @@ def fit_spectrum(grp_pha, nh_gal, redshift, gamma_value,
         # Check we have enough noticed channels
         n_noticed = shp.get_data(1).get_dep(True).size
         if n_noticed < 3:
-            print(f"    WARNING: only {n_noticed} noticed bins, "
-                  f"skipping.")
-            return None
+            # Too little data to fit, like the min-counts skip; not
+            # an error.
+            print(f"    SKIPPED: only {n_noticed} noticed bins.")
+            return 'skipped'
 
         # Define the model.
         # Suppress the tbvabs version banner that the XSPEC model
@@ -587,6 +589,8 @@ def process_one(entry, nh_gal, redshift, defgamma,
                        gamma_value, freeze_gamma, emin, emax,
                        caldb_override, bkg_mode, model_type)
 
+    if fit == 'skipped':
+        return 'skipped', None
     if fit is None:
         print(f"    FIT FAILED.")
         return 'failed', None
