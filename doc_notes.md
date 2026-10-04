@@ -183,3 +183,27 @@ Logged during **1.2.4.doc** (Step 4 page, `docs/step4-survey`).
   quietly use the archive's own cleaned files (the PC master-table one-liner
   finds nothing there). The Step 4 page warns about it; later pages should
   say "run inside `XRT_output`" as well.
+
+Logged during **1.2.5.doc** (Step 5 page, `docs/step5-pc-inspection`). No
+code changes. Findings:
+
+- **Question for the author: the pile-up radius counts excesses too.**
+  `detect_pileup_radius` flags rings by |residual|, so an excess above the
+  fixed-shape King model sets the radius as readily as the core deficit.
+  On-axis 3C 273: 018's deficit ends at ~8″ but an excess at 13–19″ sets
+  20″; 073's ends at ~10″ but an excess at 23″ sets 24″. The off-axis
+  SDSS J122933 pointing (3C 273 at 7.3′) has no excess and gets 10″ from
+  the deficit. The excess may mean the fixed rc/β doesn't match this
+  source's PSF. It errs conservative; documented, not changed.
+- **Overrides reach extraction only through `_pileup.txt`.** Extraction
+  never reads `pileup_overrides.txt`, though `parallel_extract.py` symlinks
+  it into each chunk dir as if it did. Documented ("re-run 5a"); for
+  1.2.7 to decide whether extraction should read the file directly.
+- **Extraction ignores the pile-up radius, overrides included, below 0.5
+  ct/s** of whole-field rate (`get_inner_radius`). Documented.
+- **`badstripe` is parsed by the extractor and never used.** Documented as
+  a note-only column.
+- **`--sosta` reads `source_extraction_<OBSID>.txt` files that nothing in
+  the pipeline writes.** Documented; a candidate for removal.
+- **First images in `docs/img/`**: Step 5 profile and source plots, as
+  256-colour PNGs (25–32 KB each) that keep the plot colours exact.
