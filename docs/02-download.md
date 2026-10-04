@@ -86,8 +86,9 @@ script does the comparison in MJD space. `--start-date` is inclusive;
 radius (12′ by default), not just the named target. For a crowded field this
 means you get nearby sources too — see [Gotchas](#gotchas). There is no
 `--target-name` filter by design; narrow with a date window instead, or accept
-the extra pointings as off-axis fill (the off-axis angle surfaces at
-[Step 4 — survey](04-survey.md) so the master tables can flag them).
+the extra pointings as off-axis fill (the [Step 4 survey](04-survey.md) shows
+each pointing's target and offset from your source, and you choose what to
+keep in the master tables).
 
 ## Inputs and outputs
 
@@ -163,8 +164,9 @@ An OBSID file is plain text, one ID per line; blank lines and `#` comments
    you get *all* Swift pointings within 12′ — which for 3C 273 includes 27
    pointings of the nearby AGN SDSS J122933+015810. For most use cases you
    either filter on observation date or accept the additional pointings as
-   off-axis fill (the off-axis angle column appears in
-   [Step 4 — survey](04-survey.md), so the master tables can flag them). There
+   off-axis fill (the [Step 4 survey](04-survey.md) shows each pointing's
+   target and offset from your source, and you choose what to keep in the
+   master tables). There
    is no `--target-name` filter, **by design** — Swift target-name strings
    aren't canonical enough to be reliable.
 
@@ -172,7 +174,7 @@ An OBSID file is plain text, one ID per line; blank lines and `#` comments
    flowchart TD
      N["--name &quot;3C 273&quot; → 12' cone"] --> A["3C 273 pointings (on-target)"]
      N --> B["SDSS J122933+015810 (27 pointings, ~off-axis)"]
-     A --> S["Step 4 survey: off-axis angle per OBSID"]
+     A --> S["Step 4 survey: target + offset per OBSID"]
      B --> S
      S --> M["You decide include/exclude in the master tables"]
    ```

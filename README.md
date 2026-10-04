@@ -81,16 +81,12 @@ All subsequent steps are run from within the output directory:
 cd XRT_output
 ```
 
-### Step 4 — Survey all observations
-
-Get an overview of what data exists across all OBSIDs, including mode sequences, exposures, count rates, and orbit structure:
+### Step 4 — Survey all observations → see [docs/04-survey.md](docs/04-survey.md)
 
 ```bash
-swift_xrt_summary.py              # detailed per-OBSID tables
-swift_xrt_summary.py --compact    # one row per OBSID
+swift_xrt_summary.py --compact --ra 187.2779 --dec 2.0524   # one row per OBSID
+swift_xrt_summary.py --ra 187.2779 --dec 2.0524             # detailed per-OBSID tables
 ```
-
-This reveals which observations have PC data, WT data, or both, and flags potential pile-up.
 
 ### Step 5 — PC-mode inspection
 
@@ -271,20 +267,27 @@ Each `xrtpipeline` call processes everything within an OBSID — all modes and o
 
 ### `swift_xrt_summary.py`
 
-Crawl OBSID directories and report on all cleaned event files. Shows mode sequences (WT settling → WT pointed → PC pointed), exposures, count rates, GTI/orbit structure, and pile-up warnings.
+Crawl OBSID directories and report on all cleaned event files. Shows each OBSID's target and pointing offset, mode sequences (WT settling → WT pointed → PC pointed), exposures, count rates, GTI/orbit structure, and pile-up warnings. Details: [docs/04-survey.md](docs/04-survey.md).
 
 ```
 Usage:
-    swift_xrt_summary.py              # detailed tables
-    swift_xrt_summary.py --compact    # one row per OBSID
+    swift_xrt_summary.py --ra 187.2779 --dec 2.0524              # detailed tables
+    swift_xrt_summary.py --compact --ra 187.2779 --dec 2.0524    # one row per OBSID
+
+Options:
+    --compact     One row per OBSID
+    --ra/--dec    Source position; pointing offsets are measured from it
+                  (default: from each observation's own target)
 
 Output (terminal only):
-    Per-OBSID tables with mode, exposure, events, count rate
+    Per-OBSID tables with target, pointing offset, mode, exposure,
+    events, count rate
     GTI orbit analysis (segment durations, gap lengths, duty cycle)
     Pile-up warnings (PC >0.5 ct/s, WT >150 ct/s)
     Compact table with columns:
         OBSID, Date/Time, Total(ks), ct/s, Slew_i, Slew_f,
-        N_WT, N_PC, WT_exp(ks), PC_exp(ks), Orb, Seq
+        N_WT, N_PC, WT_exp(ks), PC_exp(ks), Orb, Seq, Off('), Target
+    OBSIDs with no cleaned event files are listed under the compact table
 
 Sequence codes:
     1=WT_SLEW  2=PC_SLEW  3=WT_SETTLING  4=PC_SETTLING

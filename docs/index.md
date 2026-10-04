@@ -14,7 +14,7 @@ For a one-source quick-start example, see the [README](../README.md).
 | 1 | [Setup](01-setup.md) | (env + `swift_xrt_doctor.py`) | both | Install the pipeline and verify each terminal |
 | 2 | [Download data](02-download.md) | `swift_xrt_download.py` | either | List, filter, and download Swift XRT observations |
 | 3 | [Run xrtpipeline](03-xrtpipeline.md) | `xrt_pipeline.py` | HEASoft | Produce cleaned level-2 event files |
-| 4 | [Survey observations](04-survey.md) | `swift_xrt_summary.py` | either | Per-OBSID summary of modes, exposures, orbits |
+| 4 | [Survey observations](04-survey.md) | `swift_xrt_summary.py` | either | Per-OBSID targets, pointing offsets, modes, exposures, orbits |
 | 5 | [PC-mode inspection](05-pc-inspection.md) | `swift_xrt_king_profile.py`, `swift_pc_source_viewer.py`, PC master table | either | Pile-up + source images + PC master selection table |
 | 6 | [WT-mode inspection](06-wt-inspection.md) | `swift_wt_summary_viewer.py`, `make_wt_master_table.py` | either | WT 1D-strip profiles + WT master selection table |
 | 7 | [Extract spectra](07-extract.md) | `parallel_extract.py` (or `swift_xrt_extract_spectra.py`) | HEASoft | Per-OBSID source/background extraction + grouping |

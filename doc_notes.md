@@ -162,3 +162,24 @@ stayed `yes`. Other findings:
   pointed ones (the WT tools and both master tables take `po` only).
   Harmless for 3C 273, whose PC data are all pointed, but a PC settling or
   slew file would be profiled. For 1.2.5.doc.
+
+Logged during **1.2.4.doc** (Step 4 page, `docs/step4-survey`).
+
+- **To do: a documentation website.** Build a GitHub Pages site (sidebar,
+  search; e.g. MkDocs) from `docs/` so the pages read like a manual. Asked
+  for on 2026-10-04; planned after the remaining doc pages. Until then the
+  docs read best on GitHub (the repo is public), or in a terminal with
+  `python3 -m rich.markdown -p docs/<page>.md`.
+- ~~`docs/02-download.md` said the survey shows each pointing's off-axis
+  angle; it didn't~~ — FIXED on `docs/step4-survey`: the survey now shows
+  each OBSID's target and pointing offset (from `--ra`/`--dec`, else the
+  observation's own target). On epoch 1 this flags OBSID 041 at 5.1′ (all
+  others within 3.6′) already at Step 4.
+- ~~`--compact` silently drops OBSIDs with no cleaned event files~~ — FIXED
+  on the same branch; they are listed under the table.
+- **Steps 4–7 also read compressed files.** The survey, King profile, PC and
+  WT viewers and WT master table also glob `*_cl.evt.gz`, and extraction
+  globs `*_ex.img*`. Run in `XRT_input` instead of `XRT_output`, they would
+  quietly use the archive's own cleaned files (the PC master-table one-liner
+  finds nothing there). The Step 4 page warns about it; later pages should
+  say "run inside `XRT_output`" as well.
