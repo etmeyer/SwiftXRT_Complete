@@ -163,6 +163,28 @@ def king_profile(r, S0, rc, beta, bkg):
 # Source centroiding
 # ---------------------------------------------------------------
 
+def column_wcs(header, x_col, y_col):
+    """
+    Celestial WCS of an event file's sky X/Y columns (a TAN
+    projection), for converting the source RA/Dec to sky pixels.
+
+    A linear (RA - TCRVL) / TCDLT misses the cos(Dec) factor: harmless
+    for 3C 273 at Dec +2, but at Dec +71 (S5 0716+714) it put the
+    starting point 51-231" from the source, outside the centroid
+    search, so the profile was built on empty sky.
+    """
+    w = WCS(naxis=2)
+    w.wcs.ctype = [header.get(f'TCTYP{x_col}', 'RA---TAN'),
+                   header.get(f'TCTYP{y_col}', 'DEC--TAN')]
+    w.wcs.crval = [header.get(f'TCRVL{x_col}', 0.0),
+                   header.get(f'TCRVL{y_col}', 0.0)]
+    w.wcs.crpix = [header.get(f'TCRPX{x_col}', 500.5),
+                   header.get(f'TCRPX{y_col}', 500.5)]
+    w.wcs.cdelt = [header.get(f'TCDLT{x_col}', -0.0006548089),
+                   header.get(f'TCDLT{y_col}', 0.0006548089)]
+    return w
+
+
 def refine_centroid(x_events, y_events, x0, y0, search_radius_pix,
                     iterations=3):
     """
@@ -660,18 +682,9 @@ def process_event_file(filepath, ra_src, dec_src, rmin_fit, rmax_fit,
 
             # Convert RA/Dec to pixel using table column WCS
             if x_col and y_col:
-                tcrvl_x = header.get(f'TCRVL{x_col}', 0)
-                tcrpx_x = header.get(f'TCRPX{x_col}', 500)
+                x0, y0 = column_wcs(header, x_col, y_col).wcs_world2pix(
+                    [[ra_src, dec_src]], 1)[0]
                 tcdlt_x = header.get(f'TCDLT{x_col}', -0.0006548089)
-
-                tcrvl_y = header.get(f'TCRVL{y_col}', 0)
-                tcrpx_y = header.get(f'TCRPX{y_col}', 500)
-                tcdlt_y = header.get(f'TCDLT{y_col}', 0.0006548089)
-
-                # Simple linear WCS (valid for small XRT FOV)
-                x0 = tcrpx_x + (ra_src - tcrvl_x) / tcdlt_x
-                y0 = tcrpx_y + (dec_src - tcrvl_y) / tcdlt_y
-
                 plate_scale = abs(tcdlt_x) * 3600  # deg/pixel -> arcsec/pixel
             else:
                 # Fallback: try standard image WCS via astropy

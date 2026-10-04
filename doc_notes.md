@@ -120,9 +120,9 @@ on failure. Still open:
   1D-scaled background (041: -8.4 sigma; faintest real epoch-1 obs: 39.5
   sigma), records it in `_wt_profile.txt`, and `make_wt_master_table.py`
   sets include=no with the reason in the comment column.
-  Side note: `find_sky_position` derives the target X from RA only and Y
-  from the median of nearby events (never from Dec). It works for on-axis
-  data but is crude; a proper TAN-WCS seed would be more robust.
+  ~~Side note: `find_sky_position` derives the target X from RA only and Y
+  from the median of nearby events (never from Dec).~~ FIXED on
+  `docs/step6-wt-inspection` (worse than crude; see the 1.2.6.doc notes).
 - ~~King-profile low-count guard~~ — FIXED on `fix/king-lowcount-guard`.
   043 (122 s) and 080 (75 s) got 2"/4" because with ~200-300 events the
   residuals can't reach 3 sigma. The four long PC exposures of the same
@@ -240,3 +240,33 @@ Findings:
   the pipeline writes.** Documented; a candidate for removal.
 - **First images in `docs/img/`**: Step 5 profile and source plots, as
   256-colour PNGs (25–32 KB each) that keep the plot colours exact.
+
+Logged during **1.2.6.doc** (Step 6 page, `docs/step6-wt-inspection`).
+
+- ~~RA/Dec → sky pixels missed cos(Dec)~~ — FIXED on that branch, in both
+  `swift_wt_summary_viewer.py` and `swift_xrt_king_profile.py` (Step 5):
+  `X = TCRPX + (RA − TCRVL)/TCDLT`, plus (WT) Y from the median of events in
+  that column. Invisible for 3C 273 (Dec +2). Tested far from the equator:
+  S5 0716+714 (Dec +71, three PC pointings) seeded 51–231″ from the source,
+  outside the 15″ centroid search, so the pile-up profile was built on empty
+  sky; 1ES 1959+650 (Dec +65, WT, 10.8 ct/s) came out "not detected"
+  (−9.3σ) 146 px off and would have been excluded by 6b. Both now use the
+  column TAN WCS via astropy; 3C 273 results unchanged. Test data:
+  `test_runs/hidec/` (S5 0716+714), `test_runs/hidec2/` (1ES 1959+650).
+- **Open, for 1.2.7: how good is the ARF's bad-column correction in WT
+  mode?** In 1ES 1959+650 00035025254 the source peaks at DETX 296, beside
+  a bad column. The ARF peaks at 78 cm² against 146 cm² for another
+  observation (00034588010) at the same count rate, so its flux per count
+  is twice normal (8.0e-11 vs 3.5e-11 erg cm⁻² per count; 3C 273 gives
+  4.2e-11). A 2D PSF-weighted exposure estimate loses only 24% there, the
+  ARF 47%; WT's 1D readout may explain the difference. Worth an empirical
+  check: 3C 273 WT observations with the source on a bad column against
+  their neighbours in time.
+- **Open, for 1.2.7: extraction's WT fallback position** (no
+  `_wt_profile.txt`) is the median of all event X/Y in the file. 6b warns
+  about included observations without a profile, so it is rare.
+- The WT viewer's DETX-profile labels were black on black (fixed), and
+  `_wt_profile.txt` told users to set BACKSCAL by hand though extraction
+  does it (fixed).
+- `make_wt_master_table.py` rewrites its output from scratch, like the PC
+  one-liner; documented, with `--output` + `diff` as the workaround.

@@ -105,23 +105,14 @@ find . -name '*xpc*po*_cl.evt' | sort | \
 
 To change a pile-up radius, add the file stem and radius to `pileup_overrides.txt` and re-run `swift_xrt_king_profile.py`; extraction reads the radius from `_pileup.txt`.
 
-### Step 6 — WT-mode inspection
-
-**6a.** Run the WT viewer to inspect strip profiles and extraction regions:
+### Step 6 — WT-mode inspection → see [docs/06-wt-inspection.md](docs/06-wt-inspection.md)
 
 ```bash
-swift_wt_summary_viewer.py --ra 187.2779 --dec 2.0524
+swift_wt_summary_viewer.py --ra 187.2779 --dec 2.0524   # 6a: WT plots, regions, detection
+make_wt_master_table.py                                 # 6b: the WT master table
 ```
 
-**6b.** Generate the WT master table:
-
-```bash
-make_wt_master_table.py
-```
-
-Observations under 20 seconds exposure, and observations where the WT viewer did not detect the source (e.g. the target fell outside the WT window), are automatically set to `include=no`, with the reason in the comment column.
-
-**6c.** Edit the master tables. Open `pc_master_table.txt` and `wt_master_table.txt` in a text editor. Set `include` to `no` for any observations you want to exclude (bad columns through source, anomalous data, etc.). Add notes in the comment field.
+**6c.** Edit `pc_master_table.txt` and `wt_master_table.txt`: set `include` to `no` for any observation you want to exclude, with the reason in the comment. Re-running `make_wt_master_table.py` overwrites your edits; use `--output` to write a new file instead.
 
 ### Step 7 — Extract spectra (HEASoft terminal)
 
@@ -349,7 +340,7 @@ Useful for identifying bad columns through the source, anomalous PSF shapes, nea
 
 ### `swift_wt_summary_viewer.py`
 
-Summary table and visual diagnostic viewer for WT-mode pointed observations. Shows sky-coordinate images with extraction regions and 1D DETX cross-strip profiles. For multi-orbit observations, produces per-orbit sky image grids.
+Summary table and visual diagnostic viewer for WT-mode pointed observations. Shows sky-coordinate images with extraction regions and 1D DETX cross-strip profiles. For multi-orbit observations, produces per-orbit sky image grids. Details: [docs/06-wt-inspection.md](docs/06-wt-inspection.md).
 
 ```
 Usage:
@@ -382,7 +373,7 @@ The background annulus should be symmetric about 100 pixels (the WT window half-
 
 ### `make_wt_master_table.py`
 
-Generate `wt_master_table.txt` with include/exclude flags for WT pointed observations.
+Generate `wt_master_table.txt` with include/exclude flags for WT pointed observations. Details: [docs/06-wt-inspection.md](docs/06-wt-inspection.md).
 
 ```
 Usage:
@@ -396,7 +387,7 @@ Output format:
     OBSID  filename  include  exp(s)  ct/s  n_gti  "comment"
 ```
 
-Observations below the exposure threshold, or whose `_wt_profile.txt` says the source was not detected, are set to `include=no` by default, with the reason in the comment. Run `swift_wt_summary_viewer.py` first so the detection results exist. Edit the file to exclude additional observations based on your visual inspection.
+Observations below the exposure threshold, or whose `_wt_profile.txt` says the source was not detected, are set to `include=no` by default, with the reason in the comment. Run `swift_wt_summary_viewer.py` first so the detection results exist. Edit the file to exclude additional observations based on your visual inspection; the script rewrites the file from scratch, so re-run it with `--output` to avoid losing those edits.
 
 ### `swift_xrt_extract_spectra.py`
 
