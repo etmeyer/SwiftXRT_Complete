@@ -809,8 +809,15 @@ def get_spectrum_info(pha_file):
 
         # Count grouped bins if GROUPING column exists
         if 'GROUPING' in data.columns.names:
-            # In OGIP standard, GROUPING=1 marks start of a new bin
-            info['n_grouped_bins'] = int(np.sum(data['GROUPING'] == 1))
+            # In OGIP standard, GROUPING=1 marks start of a new bin.
+            # Bins grppha marked bad (channels below 0.3 keV, and the
+            # leftover high channels that never reach the minimum)
+            # don't count: 043's 84-count spectrum has 4 usable bins
+            # among 488 bin starts.
+            starts = data['GROUPING'] == 1
+            if 'QUALITY' in data.columns.names:
+                starts &= data['QUALITY'] == 0
+            info['n_grouped_bins'] = int(np.sum(starts))
         else:
             info['n_grouped_bins'] = None
 
