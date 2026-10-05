@@ -227,11 +227,11 @@ Findings:
   +12% → −2%, wing χ²/dof 0.8–3.5 → 0.7–1.3, and the residual flags move
   from 20–24″ to the core deficit at 10–12″. The off-axis pointing misses
   the bad columns and never showed the bump.
-- **The fitter freezes Γ at `--defgamma` 2.0 below `--mingamma` 200
-  counts.** For 3C 273 (Γ ≈ 1.5) that biases the 0.3–10 keV flux of short
-  PC snapshots such as 043 (84 counts at its new 13.7″); measured in
-  1.2.7 (below): −26% to −36%, while the 1 keV flux density moves ~1%.
-  For 1.2.8.
+- ~~**The fitter freezes Γ at `--defgamma` 2.0 below `--mingamma` 200
+  counts.**~~ FIXED in 1.2.8 (user's choice): frozen at the median Γ of
+  the run's free fits. Measured in 1.2.7: Γ = 2.0 made the 0.3–10 keV flux
+  of ~100-count 3C 273 spectra 26–36% low; the 1 keV flux density moved
+  ~1%.
 - ~~**Overrides reach extraction only through `_pileup.txt`.**~~ Kept that
   way in 1.2.7 (one source of truth, and re-running 5a shows the override
   on the plot); `parallel_extract.py` no longer symlinks the overrides
@@ -312,7 +312,7 @@ Logged during **1.2.7.doc** (Step 7, `docs/step7-extract`).
   without a `_wt_profile.txt`.** Both documented.
 - **Open: extraction's WT fallback position** (median of all events) and
   **no exclusion of other sources from background regions**. Documented.
-- **For 1.2.8 — the fit statistic (user asked whether C-stat is chosen
+- ~~**For 1.2.8**~~ DONE in 1.2.8 (W-stat for all, user's choice) **— the fit statistic (user asked whether C-stat is chosen
   dynamically; it isn't).** The fitter always uses chi2datavar on
   background-subtracted spectra grouped to ≥20 counts. Simulations
   (`test_runs/stat/`: compare.py, sim2.json; 400 fakes per row from the
@@ -327,3 +327,30 @@ Logged during **1.2.7.doc** (Step 7, `docs/step7-extract`).
   0.9–3.3σ), Γ unchanged. Refs: Humphrey, Liu & Buote 2009 (ApJ 693,
   822); XSPEC manual Appendix B. Also: `run_grppha`'s docstring suggests
   `min_counts=1` for cstat, which is wrong for WT W-stat.
+
+Logged during **1.2.8.doc** (Step 8, `docs/step8-fit`). The user chose all
+four method changes (2026-10-05, after seeing the evidence):
+
+- **W-stat** for every spectrum on Step 7's 20-count bins (`--stat chi2`
+  keeps the old method; with `--abund angr --defgamma 2.0` it reproduces
+  the old epoch-1 table's Γ and 1 keV fluxes exactly).
+- **Short spectra**: Γ frozen at the median of the run's free fits (two
+  passes; `parallel_fit.py` takes the median across all chunks).
+- **Abundances**: `wilm` (tbabs's own; its banner said so on every run).
+  3C 273: Γ −0.012, 1 keV −1.5%; refit with nH 3e21: Γ −0.2, 1 keV −20%.
+- **Errors**: 1σ throughout (Γ and 1 keV flux were 90%, band flux 1σ).
+- Also: band flux = best fit, not the median of 500 MC samples (that
+  moved by up to 1.6% between identical runs); `stat/dof` column and
+  header notes in `fit_results.txt`; `--model` defaults to absorbed with
+  `--redshift`, else simple, in both scripts (they disagreed); `--bkg`
+  is use|none; parallel rows sorted by OBSID then mode; the XSPEC banners
+  are silenced at the file-descriptor level (they leaked at exit).
+- Net change, 3C 273 epoch 1 (85 free-Γ spectra): band flux +4.6%
+  (median; +3.4 to +6.9%), 1 keV +2.3% (+1.0 to +5.2%), Γ −0.018; 043 PC
+  band flux 8.8e-11 → 1.24e-10 (Γ 2.0 → 1.565).
+- **Open:** for a piled-up PC source, ~1.5% of the subtracted (now
+  modelled) background is PSF wings (1.2.7); W-stat models the
+  background spectrum as given, so the same applies.
+- **Open, small:** frozen-Γ fits have no Γ uncertainty in their errors;
+  the median is taken over both modes (epoch 1: WT 1.585, PC 1.508 under
+  the old fits).
