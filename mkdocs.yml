@@ -37,6 +37,7 @@ nav:
   - 6. WT-mode inspection: 06-wt-inspection.md
   - 7. Extract spectra: 07-extract.md
   - 8. Fit and plot: 08-fit-and-plot.md
+  - Re-running after Oct 2026: rerun-2026-10.md
 
 markdown_extensions:
   - tables

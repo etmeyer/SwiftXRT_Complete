@@ -5,6 +5,8 @@ includes mechanism, inputs/outputs, gotchas, and space for your own notes as
 you work through it.
 
 For installation and environment setup, start at [Step 1](01-setup.md).
+If you ran the pipeline before October 2026, see
+[Re-running after the October 2026 changes](rerun-2026-10.md).
 For a one-source quick-start example, see the [README](https://github.com/etmeyer/SwiftXRT_Complete/blob/main/README.md).
 
 ## Workflow
