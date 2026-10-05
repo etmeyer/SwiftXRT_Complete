@@ -406,15 +406,15 @@ def main():
     else:
         print(f"All {len(expected)} grouped spectra written.")
 
-    if n_fail or missing:
-        sys.exit(1)
-
     if n_fail > 0:
         print("Failed chunks:")
         for r in results:
             if r['returncode'] != 0:
                 print(f"  Chunk {r['chunk_id']:02d}: "
                       f"exit code {r['returncode']}")
+
+    if n_fail or missing:
+        sys.exit(1)
 
 
 if __name__ == '__main__':
