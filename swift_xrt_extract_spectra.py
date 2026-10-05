@@ -492,11 +492,18 @@ def extract_spectrum_xselect(evt_file, region_file, output_pha,
     within a given region.
 
     xselect is driven via stdin commands piped to the process.
+
+    Paths are given relative to the working directory (OBSID/file,
+    about 40 characters). With absolute paths xselect reported
+    writing the spectrum but wrote nothing once XRT_output's path
+    passed about 90 characters, or about 70 under parallel_extract.py,
+    whose chunk folders add 21.
     """
-    evt_dir = os.path.dirname(os.path.abspath(evt_file))
+    evt_dir = os.path.relpath(os.path.dirname(os.path.abspath(evt_file)))
     evt_name = os.path.basename(evt_file)
     output_pha_abs = os.path.abspath(output_pha)
-    region_abs = os.path.abspath(region_file)
+    output_pha_rel = os.path.relpath(output_pha_abs)
+    region_rel = os.path.relpath(region_file)
 
     # xselect commands
     # Note: we use 'no' for saved session, set the data directory
@@ -507,9 +514,9 @@ read event
 {evt_dir}
 {evt_name}
 yes
-filter region {region_abs}
+filter region {region_rel}
 extract spectrum
-save spectrum {output_pha_abs}
+save spectrum {output_pha_rel}
 exit
 no
 """
@@ -739,6 +746,10 @@ def run_grppha(src_pha, out_pha, bkg_pha, arf_file, rmf_path,
     """
     src_abs = os.path.abspath(src_pha)
     out_abs = os.path.abspath(out_pha)
+    # Relative paths, as for xselect: grppha could not open its input
+    # once XRT_output's path was ~150 characters.
+    src_rel = os.path.relpath(src_abs)
+    out_rel = os.path.relpath(out_abs)
 
     # The background and ARF sit next to the grouped spectrum, so
     # record them by bare filename: fitting tools resolve relative
@@ -753,8 +764,8 @@ def run_grppha(src_pha, out_pha, bkg_pha, arf_file, rmf_path,
     # grppha prompts: input file, output file, then GRPPHA[] commands
     # Note: RMF path uses $CALDB for portability
     commands = (
-        f"{src_abs}\n"
-        f"{out_abs}\n"
+        f"{src_rel}\n"
+        f"{out_rel}\n"
         f"bad 0-29\n"
         f"chkey backfile {bkg_name}\n"
         f"chkey ancrfile {arf_name}\n"
