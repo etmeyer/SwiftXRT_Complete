@@ -1072,8 +1072,8 @@ def process_pc_observation(entry, ra_src, dec_src, r_outer,
             print(f"  Using existing exposure map: "
                   f"{os.path.basename(expo_file)}")
         else:
-            print(f"  WARNING: cannot generate exposure map "
-                  f"(missing att/hk files).")
+            print(f"  WARNING: no exposure map {stem}_ex.img; Step 3 "
+                  f"makes one unless run with --createexpomap no.")
 
     # ---- Generate ARF ----
     arf_file = os.path.join(obsid_path, f'{stem}.arf')
@@ -1307,7 +1307,8 @@ def process_wt_observation(entry, min_counts,
             print(f"  Using existing exposure map: "
                   f"{os.path.basename(expo_file)}")
         else:
-            print(f"  WARNING: cannot generate exposure map.")
+            print(f"  WARNING: no exposure map {stem}_ex.img; Step 3 "
+                  f"makes one unless run with --createexpomap no.")
 
     # ---- Generate ARF ----
     arf_file = os.path.join(obsid_path, f'{stem}.arf')
