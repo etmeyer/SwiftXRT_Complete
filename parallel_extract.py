@@ -133,12 +133,6 @@ def run_chunk(chunk_id, mini_table, script_args, base_dir, env,
                 if not os.path.exists(link):
                     os.symlink(full, link)
 
-        # Also symlink pileup_overrides.txt if it exists
-        overrides = os.path.join(base_dir, 'pileup_overrides.txt')
-        if os.path.exists(overrides):
-            os.symlink(overrides,
-                        os.path.join(tmp_dir, 'pileup_overrides.txt'))
-
         # Copy the mini-table
         table_basename = os.path.basename(mini_table)
         shutil.copy2(mini_table, os.path.join(tmp_dir, table_basename))
@@ -272,7 +266,9 @@ def main():
                     jobs.append((chunk_id, mini_path, 'pc'))
                     chunk_id += 1
 
-                print(f"PC: {n_pc} observations → {n_chunks} chunks")
+                # Chunks of ceil(n/n_chunks) can leave the last ones empty
+                n_made = sum(1 for j in jobs if j[2] == 'pc')
+                print(f"PC: {n_pc} observations → {n_made} chunks")
         else:
             if args.mode == 'pc':
                 print(f"ERROR: {args.pctable} not found.")
@@ -299,7 +295,9 @@ def main():
                     jobs.append((chunk_id, mini_path, 'wt'))
                     chunk_id += 1
 
-                print(f"WT: {n_wt} observations → {n_chunks} chunks")
+                # Chunks of ceil(n/n_chunks) can leave the last ones empty
+                n_made = sum(1 for j in jobs if j[2] == 'wt')
+                print(f"WT: {n_wt} observations → {n_made} chunks")
         else:
             if args.mode == 'wt':
                 print(f"ERROR: {args.wttable} not found.")

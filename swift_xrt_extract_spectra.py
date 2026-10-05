@@ -1334,7 +1334,8 @@ def process_wt_observation(entry, min_counts,
         'stem': stem,
         'mode': 'WT',
         'r_inner': 0.0,
-        'r_outer': float(src_radius),
+        # arcsec, like the PC rows of the summary table
+        'r_outer': src_radius * plate_scale,
         'src_counts': src_info['total_counts'],
         'bkg_counts': bkg_spec_info['total_counts'],
         'exposure': src_info['exposure'],
@@ -1526,9 +1527,10 @@ def main():
         print(f"\n\n{'='*130}")
         print(f"  EXTRACTION SUMMARY")
         print(f"{'='*130}")
+        rin_h, rout_h = 'Rin"', 'Rout"'     # radii in arcsec
         hdr = (f"  {'OBSID':<14} {'File':<30} {'Mode':>4} "
                f"{'Date-Obs':<12} "
-               f"{'Rin':>5} {'Rout':>5} "
+               f"{rin_h:>5} {rout_h:>5} "
                f"{'SrcCts':>7} {'BkgCts':>7} {'Exp(s)':>8} "
                f"{'Bins':>5}  {'RMF'}")
         print(hdr)
