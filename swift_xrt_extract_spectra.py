@@ -350,10 +350,13 @@ def find_background_region(evt_file, xc, yc, plate_scale,
     Determine a background region that avoids the source.
 
     Strategy: Use a large annulus centered on the source, far
-    enough away that the PSF contribution is negligible. The
-    default range of 100-160 arcsec is well outside the XRT PSF
-    (which is effectively zero beyond ~60-70 arcsec) but still
-    on the detector.
+    out in the PSF wings but still on the detector. The wings are
+    not negligible there for a bright source: 3C 273 (073) is
+    about 8 times brighter at 100-160 arcsec than beyond 300
+    arcsec, so most of the annulus counts are the source's. Scaled
+    to a piled-up source's annulus they are 1.6% of its counts, so
+    the subtraction lowers such fluxes by about 1.5%; for a full
+    47 arcsec circle the effect is a few tenths of a percent.
 
     We verify that the region actually contains events (i.e.,
     is on the detector). If not, we shrink the outer radius
