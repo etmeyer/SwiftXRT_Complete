@@ -253,15 +253,11 @@ Logged during **1.2.6.doc** (Step 6 page, `docs/step6-wt-inspection`).
   (−9.3σ) 146 px off and would have been excluded by 6b. Both now use the
   column TAN WCS via astropy; 3C 273 results unchanged. Test data:
   `test_runs/hidec/` (S5 0716+714), `test_runs/hidec2/` (1ES 1959+650).
-- **Open, for 1.2.7: how good is the ARF's bad-column correction in WT
-  mode?** In 1ES 1959+650 00035025254 the source peaks at DETX 296, beside
-  a bad column. The ARF peaks at 78 cm² against 146 cm² for another
-  observation (00034588010) at the same count rate, so its flux per count
-  is twice normal (8.0e-11 vs 3.5e-11 erg cm⁻² per count; 3C 273 gives
-  4.2e-11). A 2D PSF-weighted exposure estimate loses only 24% there, the
-  ARF 47%; WT's 1D readout may explain the difference. Worth an empirical
-  check: 3C 273 WT observations with the source on a bad column against
-  their neighbours in time.
+- ~~How good is the ARF's bad-column correction in WT mode?~~ — ANSWERED
+  in 1.2.7: fine. The halved ARF of 1ES 1959+650 00035025254 (78 vs
+  146 cm²) came from the wrong exposure map (next section). With its own
+  map the ARF is 112 cm², 23% low, matching the 24% PSF-weighted exposure
+  the bad column removes.
 - **Open, for 1.2.7: extraction's WT fallback position** (no
   `_wt_profile.txt`) is the median of all event X/Y in the file. 6b warns
   about included observations without a profile, so it is rare.
@@ -270,3 +266,17 @@ Logged during **1.2.6.doc** (Step 6 page, `docs/step6-wt-inspection`).
   does it (fixed).
 - `make_wt_master_table.py` rewrites its output from scratch, like the PC
   one-liner; documented, with `--output` + `diff` as the workaround.
+
+Logged during **1.2.7.doc** (Step 7, `docs/step7-extract`).
+
+- ~~Extraction builds ARFs from whichever exposure map a directory listing
+  returns first~~ — FIXED on that branch. Without its own exposure map
+  (never, in the XRT_output layout), extraction took the first
+  `*xwt*_ex.img*` / `*xpc*_ex.img*` in the OBSID folder; most WT OBSIDs
+  also have a settling-segment map. 3C 273 epoch 1: 34 of 82 WT ARFs used
+  the settling map, in May and today alike. Re-extracted with the right
+  maps (`test_runs/e1/old` vs `new`), those 1 keV fluxes change by −24% to
+  +13% (median −9%), Γ is unchanged, and the other 47 are identical. Their
+  scatter around the median of WT points within 3 days drops from 17.2%
+  to 4.7% rms (unaffected points: 5.5%). Any earlier WT light curve from
+  this pipeline has the same problem for OBSIDs with a settling map.

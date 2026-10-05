@@ -544,6 +544,25 @@ no
 # Run xrtexpomap
 # ---------------------------------------------------------------
 
+def find_exposure_map(obsid_path, evt_file, stem):
+    """
+    The xrtpipeline exposure map for this event file: the same stem
+    with _ex.img, or None. An OBSID often has several maps (WT
+    settling and pointed segments, PC windows). Taking whichever a
+    directory listing returned first built 34 of 82 3C 273 epoch-1 WT
+    ARFs from the settling-segment map: ARFs up to 31% low, so fluxes
+    up to ~45% high, with nothing to show for it.
+    """
+    for folder in (os.path.dirname(evt_file), obsid_path):
+        for ext in ('_ex.img', '_ex.img.gz'):
+            candidate = os.path.join(folder, stem + ext)
+            if os.path.exists(candidate):
+                return candidate
+    matches = glob.glob(os.path.join(obsid_path, '**', stem + '_ex.img*'),
+                        recursive=True)
+    return matches[0] if matches else None
+
+
 def find_auxiliary_files(obsid_path, obsid):
     """
     Locate the attitude file and housekeeping file needed by
@@ -1029,11 +1048,9 @@ def process_pc_observation(entry, ra_src, dec_src, r_outer,
         expo_file = run_xrtexpomap(evt_file, att_file, hk_file,
                                     obsid_path)
     else:
-        # Check if pipeline already made one
-        expo_candidates = glob.glob(os.path.join(
-            obsid_path, '**', '*xpc*_ex.img*'), recursive=True)
-        if expo_candidates:
-            expo_file = expo_candidates[0]
+        # The exposure map xrtpipeline made for this event file
+        expo_file = find_exposure_map(obsid_path, evt_file, stem)
+        if expo_file:
             print(f"  Using existing exposure map: "
                   f"{os.path.basename(expo_file)}")
         else:
@@ -1265,11 +1282,9 @@ def process_wt_observation(entry, min_counts,
         expo_file = run_xrtexpomap(evt_file, att_file, hk_file,
                                     obsid_path)
     else:
-        # Check for existing WT exposure map
-        expo_candidates = glob.glob(os.path.join(
-            obsid_path, '**', '*xwt*_ex.img*'), recursive=True)
-        if expo_candidates:
-            expo_file = expo_candidates[0]
+        # The exposure map xrtpipeline made for this event file
+        expo_file = find_exposure_map(obsid_path, evt_file, stem)
+        if expo_file:
             print(f"  Using existing exposure map: "
                   f"{os.path.basename(expo_file)}")
         else:
