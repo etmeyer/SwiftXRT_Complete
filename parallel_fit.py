@@ -469,12 +469,13 @@ def main():
     # that exists.
     if tables:
         n_merged = merge_results(tables, args.output)
-        print(f"\nMerged {n_merged} results into {args.output}")
+        print(f"\nMerged {n_merged} results into {args.output}",
+              flush=True)
 
         # Generate the combined plot using plot_lightcurve.py
         plot_script = os.path.join(SCRIPT_DIR, 'plot_lightcurve.py')
         if os.path.exists(plot_script):
-            print(f"Generating light curve plot...")
+            print(f"Generating light curve plot...", flush=True)
             subprocess.run(
                 [sys.executable, plot_script,
                  '--input', args.output,
