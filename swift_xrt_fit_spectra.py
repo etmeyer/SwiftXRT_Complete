@@ -14,8 +14,17 @@ determine which observations to fit. Both modes are processed
 in a single run with results combined in the output table
 and light curve plot.
 
-For low-count spectra (<200 cts), gamma is frozen to a default value.
-Spectra with <40 counts are skipped entirely.
+The fit statistic is W-stat (--stat wstat): the Poisson likelihood
+for the source spectrum, with the background spectrum also treated as
+Poisson data rather than subtracted. Chi-squared on the same 20-count
+bins (--stat chi2, the method before October 2026) gave fluxes 3-4%
+low at every count level in simulated 3C 273 spectra, the bias
+described by Humphrey, Liu & Buote (2009, ApJ 693, 822).
+
+Spectra with at least --mingamma (200) counts are fitted first, with
+gamma free. Spectra below that are then fitted with gamma frozen at
+the median of those free fits (or at --defgamma, if given). Spectra
+with <40 counts are skipped entirely.
 
 Usage:
     python swift_xrt_fit_spectra.py --nh 0.0179 --redshift 0.158
@@ -223,7 +232,7 @@ def _get_header_paths(pha_file, caldb_override=None):
 
 def fit_spectrum(grp_pha, nh_gal, redshift, gamma_value,
                  freeze_gamma, emin, emax, caldb_override=None,
-                 bkg_mode='subtract', model_type='absorbed'):
+                 bkg_mode='use', model_type='absorbed', stat='wstat'):
     """
     Fit a single grouped PHA spectrum using Sherpa.
 
@@ -236,6 +245,10 @@ def fit_spectrum(grp_pha, nh_gal, redshift, gamma_value,
       pl.PhoIndex  = gamma_value (free or frozen)
       pl.norm      = 1e-3      (free)
 
+    stat 'wstat' fits the source and background spectra as Poisson
+    data (W-stat; plain C-stat with bkg_mode 'none'); 'chi2' subtracts
+    the background and uses chi2datavar (chi2gehrels without one).
+
     Returns dict with fit results, 'skipped' if there are too few
     noticed bins to fit, or None on failure.
     """
@@ -244,7 +257,8 @@ def fit_spectrum(grp_pha, nh_gal, redshift, gamma_value,
         'gamma_lo': None, 'gamma_hi': None,
         'nh_int': None, 'nh_int_lo': None, 'nh_int_hi': None,
         'norm': None, 'norm_lo': None, 'norm_hi': None,
-        'chi2': None, 'dof': None, 'reduced_chi2': None,
+        'stat_name': None, 'statval': None, 'dof': None,
+        'reduced_stat': None,
         'flux_band': None, 'flux_band_err': None,
         'flux_1keV': None, 'flux_1keV_err': None,
         'gamma_frozen': freeze_gamma,
@@ -257,7 +271,7 @@ def fit_spectrum(grp_pha, nh_gal, redshift, gamma_value,
         # Resolve $CALDB in any file paths referenced by the PHA
         # header, since Sherpa cannot expand shell variables.
         resolved = _get_header_paths(grp_pha, caldb_override)
-        needed = ['rmf', 'arf'] + (['bkg'] if bkg_mode == 'subtract'
+        needed = ['rmf', 'arf'] + (['bkg'] if bkg_mode == 'use'
                                    else [])
         missing = [k for k in needed if resolved[k] is None]
         if missing:
@@ -302,13 +316,13 @@ def fit_spectrum(grp_pha, nh_gal, redshift, gamma_value,
             if resolved['arf'] is not None:
                 print(f"    ARF: {os.path.basename(resolved['arf'])}")
                 shp.load_arf(1, resolved['arf'])
-            if resolved['bkg'] is not None and bkg_mode == 'subtract':
+            if resolved['bkg'] is not None and bkg_mode == 'use':
                 shp.load_bkg(1, resolved['bkg'])
-                # Subtract the area-scaled background from the source.
-                # BACKSCAL keywords handle the area scaling.
-                shp.subtract(1)
-            elif bkg_mode == 'none':
-                pass
+                # W-stat fits the background spectrum alongside the
+                # source; chi-squared subtracts it. Either way the
+                # BACKSCAL keywords scale it to the source region.
+                if stat == 'chi2':
+                    shp.subtract(1)
 
         # Set analysis to energy units (keV) so that ignore/notice
         # commands accept energy values rather than channel integers.
@@ -381,15 +395,21 @@ def fit_spectrum(grp_pha, nh_gal, redshift, gamma_value,
             shp.thaw(pl.PhoIndex)
 
         # --- Statistic and method ---
-        # For subtracted data, use chi2datavar which uses the
-        # observed variance (appropriate when background has been
-        # subtracted and bins have enough counts from grouping).
-        # For unsubtracted data, use chi2gehrels which applies
-        # the Gehrels (1986) Poisson approximation.
-        if bkg_mode == 'subtract':
-            shp.set_stat("chi2datavar")
+        # W-stat (the default) is the Poisson likelihood of the source
+        # and background counts, with the background level in each bin
+        # profiled out. Simulated 3C 273 spectra with a known flux:
+        # within 1% from ~200 counts up on the 20-count bins Step 7
+        # makes, where chi2datavar (data-variance weights) comes out
+        # 3-4% low at every count level. W-stat needs a few counts per
+        # bin: on 1-count bins, nearly empty WT background bins pulled
+        # it 19% low at ~100 counts. Without a background spectrum it
+        # is plain C-stat.
+        if stat == 'wstat':
+            stat_name = 'wstat' if bkg_mode == 'use' else 'cstat'
         else:
-            shp.set_stat("chi2gehrels")
+            stat_name = 'chi2datavar' if bkg_mode == 'use' \
+                else 'chi2gehrels'
+        shp.set_stat(stat_name)
         shp.set_method("levmar")
 
         # --- Fit ---
@@ -399,10 +419,11 @@ def fit_spectrum(grp_pha, nh_gal, redshift, gamma_value,
 
         # Extract fit statistic
         fr = shp.get_fit_results()
-        results['chi2'] = fr.statval
+        results['stat_name'] = stat_name
+        results['statval'] = fr.statval
         results['dof'] = fr.dof
         if fr.dof > 0:
-            results['reduced_chi2'] = fr.statval / fr.dof
+            results['reduced_stat'] = fr.statval / fr.dof
 
         # Extract best-fit parameters
         results['gamma'] = float(pl.PhoIndex.val)
@@ -413,8 +434,8 @@ def fit_spectrum(grp_pha, nh_gal, redshift, gamma_value,
             results['nh_int'] = None
 
         # --- Confidence intervals ---
-        # Use conf() for 90% confidence (delta chi2 = 2.706),
-        # which matches XSPEC's default "error" behavior.
+        # Use conf() for 90% confidence (delta statistic = 2.706,
+        # for W-stat as for chi2), as XSPEC's default "error".
         # The "hard minimum/maximum hit" warnings are normal —
         # they mean conf() explored to a parameter boundary while
         # mapping the error surface. The fit values are unaffected.
@@ -474,7 +495,9 @@ def fit_spectrum(grp_pha, nh_gal, redshift, gamma_value,
             print(f"    WARNING: flux calculation failed: {e}")
 
         # Use sample_energy_flux for flux error via MC sampling.
-        # This properly accounts for parameter correlations.
+        # This properly accounts for parameter correlations. The flux
+        # itself stays the best-fit value: the median of the samples
+        # moved by up to 1.6% between identical runs.
         try:
             with warnings.catch_warnings():
                 warnings.simplefilter("ignore")
@@ -482,7 +505,6 @@ def fit_spectrum(grp_pha, nh_gal, redshift, gamma_value,
                     id=1, lo=emin, hi=emax, num=500,
                     correlated=True)
             flux_dist = samples[:, 0]
-            results['flux_band'] = float(np.median(flux_dist))
             results['flux_band_err'] = float(np.std(flux_dist))
         except Exception as e_sample:
             # Log why MC sampling failed — common causes include
@@ -546,12 +568,42 @@ def fit_spectrum(grp_pha, nh_gal, redshift, gamma_value,
 # Process one observation
 # ---------------------------------------------------------------
 
-def process_one(entry, nh_gal, redshift, defgamma,
-                min_counts_fit, min_counts_gamma, emin, emax,
-                caldb_override=None, bkg_mode='subtract',
-                model_type='absorbed'):
+def spectrum_counts(entry):
+    """Total counts in an entry's grouped spectrum, or None."""
+    grp_pha = os.path.join(BASE_DIR, entry['obsid'],
+                           f"{entry['filename']}_grp.pha")
+    try:
+        with fits.open(grp_pha) as hdul:
+            return int(np.sum(hdul[1].data['COUNTS']))
+    except (OSError, KeyError, IndexError, TypeError):
+        return None
+
+
+def frozen_gamma(free_fits, defgamma, defgamma_note=None):
     """
-    Fit one grouped spectrum.
+    The photon index for low-count spectra, and where it came from:
+    --defgamma if given, else the median of this run's free fits,
+    else 2.0. On 3C 273, freezing at 2.0 instead of its own ~1.6 made
+    the 0.3-10 keV flux of ~100-count spectra 26-36% low.
+    """
+    if defgamma is not None:
+        return defgamma, defgamma_note or '--defgamma'
+    gammas = [r['gamma'] for r in free_fits
+              if r.get('gamma') is not None and not r.get('gamma_frozen')]
+    if gammas:
+        return float(np.median(gammas)), \
+            f'median of {len(gammas)} free fits'
+    return 2.0, 'no free fits to take a median from; default'
+
+
+def process_one(entry, nh_gal, redshift, gamma_freeze, gamma_note,
+                min_counts_fit, min_counts_gamma, emin, emax,
+                caldb_override=None, bkg_mode='use',
+                model_type='absorbed', stat='wstat'):
+    """
+    Fit one grouped spectrum. Below min_counts_gamma counts the photon
+    index is frozen at gamma_freeze (gamma_note says where it came
+    from).
 
     Returns (status, results): status is 'ok' (results dict),
     'skipped' (too few counts; not an error) or 'failed'.
@@ -576,9 +628,9 @@ def process_one(entry, nh_gal, redshift, defgamma,
 
     if counts < min_counts_gamma:
         freeze_gamma = True
-        gamma_value = defgamma
+        gamma_value = gamma_freeze
         print(f"    Low counts ({counts} < {min_counts_gamma}): "
-              f"freezing gamma={gamma_value}")
+              f"freezing gamma={gamma_value:.3f} ({gamma_note})")
     else:
         freeze_gamma = False
         gamma_value = 2.0
@@ -587,7 +639,7 @@ def process_one(entry, nh_gal, redshift, defgamma,
     # Run fit
     fit = fit_spectrum(grp_pha, nh_gal, redshift,
                        gamma_value, freeze_gamma, emin, emax,
-                       caldb_override, bkg_mode, model_type)
+                       caldb_override, bkg_mode, model_type, stat)
 
     if fit == 'skipped':
         return 'skipped', None
@@ -631,17 +683,20 @@ def process_one(entry, nh_gal, redshift, defgamma,
         if fit['gamma_err'] and fit['gamma_err'] > 0:
             f.write(f"  +/- {fit['gamma_err']:.4f}")
         elif freeze_gamma:
-            f.write(f"  (frozen)")
+            f.write(f"  (frozen: {gamma_note})")
         f.write(f"\n")
         f.write(f"Norm         : {fit['norm']:.4e}")
         if fit['norm_lo'] is not None:
             f.write(f"  ({fit['norm_lo']:.4e} - "
                     f"{fit['norm_hi']:.4e})")
         f.write(f"\n\n")
-        if fit['chi2'] is not None:
-            f.write(f"Chi2/dof     : {fit['chi2']:.2f}/"
-                    f"{fit['dof']} = "
-                    f"{fit['reduced_chi2']:.3f}\n")
+        if fit['statval'] is not None:
+            label = f"{fit['stat_name']}/dof"
+            f.write(f"{label:<13}: {fit['statval']:.2f}/"
+                    f"{fit['dof']}")
+            if fit['reduced_stat'] is not None:
+                f.write(f" = {fit['reduced_stat']:.3f}")
+            f.write("\n")
         if fit['flux_band'] is not None:
             f.write(f"Flux ({emin}-{emax} keV): "
                     f"{fit['flux_band']:.4e} erg/cm2/s")
@@ -673,9 +728,9 @@ def process_one(entry, nh_gal, redshift, defgamma,
         if fit['flux_1keV_err']:
             f1_str += f" +/- {fit['flux_1keV_err']:.3e}"
         print(f"    F_ν(1keV): {f1_str} erg/cm²/s/Hz")
-    if fit['reduced_chi2'] is not None:
-        print(f"    χ²/dof: {fit['chi2']:.1f}/{fit['dof']} = "
-              f"{fit['reduced_chi2']:.2f}")
+    if fit['reduced_stat'] is not None:
+        print(f"    {fit['stat_name']}/dof: {fit['statval']:.1f}/"
+              f"{fit['dof']} = {fit['reduced_stat']:.2f}")
 
     return 'ok', fit
 
@@ -684,14 +739,16 @@ def process_one(entry, nh_gal, redshift, defgamma,
 # Summary table
 # ---------------------------------------------------------------
 
-def write_summary_table(results, output_file, model_type='absorbed'):
-    """Write results table to file and terminal."""
+def write_summary_table(results, output_file, model_type='absorbed',
+                        notes=()):
+    """Write results table to file and terminal. notes are extra
+    '# ' comment lines for the file header."""
     header = (
         f"{'OBSID':<14} {'filename':<30} {'mode':>4} {'ctrate':>8} "
         f"{'exp(s)':>8} {'DateObs':<22} {'MJD':>12} "
         f"{'flux_band':>12} {'fband_err':>12} "
         f"{'flux_1keV':>12} {'f1_err':>12} "
-        f"{'gamma':>7} {'gamma_err':>10}"
+        f"{'gamma':>7} {'gamma_err':>10} {'stat/dof':>8}"
     )
     sep = '-' * len(header)
     lines = [header, sep]
@@ -718,6 +775,8 @@ def write_summary_table(results, output_file, model_type='absorbed'):
             if r.get('gamma_err') is not None else "N/A"
         if r.get('gamma_frozen'):
             ge = "(frozen)"
+        rs = f"{r['reduced_stat']:.3f}" \
+            if r.get('reduced_stat') is not None else "N/A"
         mode = r.get('mode', 'PC')
 
         lines.append(
@@ -725,7 +784,7 @@ def write_summary_table(results, output_file, model_type='absorbed'):
             f"{exp:>8} {date:<22} {mjd:>12} "
             f"{fb:>12} {fbe:>12} "
             f"{f1:>12} {f1e:>12} "
-            f"{gam:>7} {ge:>10}"
+            f"{gam:>7} {ge:>10} {rs:>8}"
         )
 
     lines.append(sep)
@@ -741,6 +800,8 @@ def write_summary_table(results, output_file, model_type='absorbed'):
             if model_type == 'absorbed' else 'xstbabs * xspowerlaw'
         f.write("# Swift XRT spectral fit results (Sherpa)\n")
         f.write(f"# Model: {model_str}\n")
+        for note in notes:
+            f.write(f"# {note}\n")
         f.write("# flux_band in erg/cm2/s, "
                 "flux_1keV in erg/cm2/s/Hz\n\n")
         f.write(table + '\n')
@@ -877,28 +938,41 @@ def main():
     parser.add_argument('--redshift', type=float, default=None,
                         help='Source redshift (required for '
                              '"absorbed" model)')
-    parser.add_argument('--model', type=str, default='absorbed',
+    parser.add_argument('--model', type=str, default=None,
                         choices=['absorbed', 'simple'],
                         help='Spectral model: "absorbed" = '
                              'tbabs*ztbabs*powerlaw (Galactic + '
                              'intrinsic absorption), "simple" = '
                              'tbabs*powerlaw (Galactic only) '
-                             '(default: absorbed)')
-    parser.add_argument('--defgamma', type=float, default=2.0,
-                        help='Default photon index for low-count '
-                             'spectra (default: 2.0)')
+                             '(default: absorbed with --redshift, '
+                             'else simple)')
+    parser.add_argument('--defgamma', type=float, default=None,
+                        help='Photon index for spectra under '
+                             '--mingamma counts (default: the median '
+                             'of the free fits in this run)')
+    # parallel_fit.py passes the median it took over all chunks as
+    # --defgamma, and says so here for the logs.
+    parser.add_argument('--defgamma-note', type=str, default=None,
+                        help=argparse.SUPPRESS)
+    parser.add_argument('--stat', type=str, default='wstat',
+                        choices=['wstat', 'chi2'],
+                        help='Fit statistic: "wstat" (Poisson source '
+                             'and background) or "chi2" (background '
+                             'subtracted; the method before October '
+                             '2026) (default: wstat)')
     parser.add_argument('--mincounts', type=int, default=40,
                         help='Minimum counts to attempt fitting '
                              '(default: 40)')
     parser.add_argument('--mingamma', type=int, default=200,
                         help='Minimum counts for free gamma '
                              '(default: 200)')
-    parser.add_argument('--bkg', type=str, default='subtract',
-                        choices=['subtract', 'none'],
-                        help='Background handling: "subtract" for '
-                             'standard area-scaled subtraction, '
-                             '"none" to ignore background entirely '
-                             '(default: subtract)')
+    parser.add_argument('--bkg', type=str, default='use',
+                        choices=['use', 'none', 'subtract'],
+                        help='Background: "use" the background '
+                             'spectrum (W-stat models it, chi2 '
+                             'subtracts it) or "none" to ignore it; '
+                             '"subtract" is an old name for "use" '
+                             '(default: use)')
     parser.add_argument('--caldb', type=str, default=None,
                         help='Path to HEASoft CALDB (if $CALDB '
                              'points to CIAO CALDB instead). '
@@ -966,6 +1040,14 @@ def main():
     # Sort all entries by OBSID for chronological processing
     entries.sort(key=lambda e: e['obsid'])
 
+    # Without --model, fit the intrinsic absorber only when there is
+    # a redshift to put it at.
+    if args.model is None:
+        args.model = 'absorbed' if args.redshift is not None \
+            else 'simple'
+    if args.bkg == 'subtract':
+        args.bkg = 'use'
+
     # Validate: absorbed model requires redshift
     if args.model == 'absorbed' and args.redshift is None:
         print("ERROR: --redshift is required for the 'absorbed' model.")
@@ -973,14 +1055,25 @@ def main():
 
     model_str = 'tbabs * ztbabs * powerlaw' \
         if args.model == 'absorbed' else 'tbabs * powerlaw'
+    if args.stat == 'wstat':
+        stat_str = 'W-stat (source and background as Poisson data)' \
+            if args.bkg == 'use' else 'C-stat (no background)'
+    else:
+        stat_str = 'chi2 (background subtracted)' \
+            if args.bkg == 'use' else 'chi2, Gehrels errors (no background)'
     print(f"\nModel: {model_str}")
     print(f"Galactic nH: {args.nh} x 10^22 cm^-2")
     if args.model == 'absorbed':
         print(f"Redshift: {args.redshift}")
-    print(f"Default gamma: {args.defgamma}")
+    print(f"Statistic: {stat_str}")
     print(f"Energy range: {args.emin}-{args.emax} keV")
     print(f"Min counts to fit: {args.mincounts}")
     print(f"Min counts for free gamma: {args.mingamma}")
+    if args.defgamma is not None:
+        print(f"Gamma below {args.mingamma} counts: {args.defgamma}")
+    else:
+        print(f"Gamma below {args.mingamma} counts: median of the "
+              f"free fits")
     if args.caldb:
         print(f"HEASoft CALDB: {args.caldb}")
     print(f"Background: {args.bkg}")
@@ -998,21 +1091,44 @@ def main():
     import logging
     logging.getLogger('sherpa').setLevel(logging.WARNING)
 
-    # Fit each observation
+    # Two passes: gamma free for spectra with at least --mingamma
+    # counts, then the rest with gamma frozen at the median of those
+    # fits (or at --defgamma).
+    low_ids = set()
+    for e in entries:
+        c = spectrum_counts(e)
+        if c is not None and args.mincounts <= c < args.mingamma:
+            low_ids.add(id(e))
+    passes = [[e for e in entries if id(e) not in low_ids],
+              [e for e in entries if id(e) in low_ids]]
+
     n_total = len(entries)
     all_results = []
     failed = []
-    for i, entry in enumerate(entries, 1):
-        print(f"\n  [{i}/{n_total}] [{entry['mode']}] "
-              f"{entry['obsid']} / {entry['filename']}")
-        status, result = process_one(
-            entry, args.nh, args.redshift, args.defgamma,
-            args.mincounts, args.mingamma, args.emin, args.emax,
-            args.caldb, args.bkg, args.model)
-        if status == 'ok':
-            all_results.append(result)
-        elif status == 'failed':
-            failed.append(entry['filename'])
+    gamma_freeze, gamma_note = frozen_gamma([], args.defgamma,
+                                            args.defgamma_note)
+    i = 0
+    for n_pass, batch in enumerate(passes):
+        if n_pass == 1:
+            if not batch:
+                break
+            gamma_freeze, gamma_note = frozen_gamma(
+                all_results, args.defgamma, args.defgamma_note)
+            print(f"\n  {len(batch)} spectra under {args.mingamma} "
+                  f"counts: gamma frozen at {gamma_freeze:.3f} "
+                  f"({gamma_note})")
+        for entry in batch:
+            i += 1
+            print(f"\n  [{i}/{n_total}] [{entry['mode']}] "
+                  f"{entry['obsid']} / {entry['filename']}")
+            status, result = process_one(
+                entry, args.nh, args.redshift, gamma_freeze, gamma_note,
+                args.mincounts, args.mingamma, args.emin, args.emax,
+                args.caldb, args.bkg, args.model, args.stat)
+            if status == 'ok':
+                all_results.append(result)
+            elif status == 'failed':
+                failed.append(entry['filename'])
 
     if failed:
         print(f"\nFAILED ({len(failed)}): {' '.join(failed)}")
@@ -1021,9 +1137,14 @@ def main():
         print("\nNo successful fits.")
         sys.exit(1 if failed else 0)
 
-    # Summary table
+    # Summary table, in OBSID order
+    all_results.sort(key=lambda r: (r['obsid'], r.get('mode', '')))
+    notes = [f"Statistic: {stat_str}"]
+    if any(r.get('gamma_frozen') for r in all_results):
+        notes.append(f"Under {args.mingamma} counts gamma is frozen at "
+                     f"{gamma_freeze:.3f} ({gamma_note})")
     output_path = os.path.join(BASE_DIR, args.output)
-    write_summary_table(all_results, output_path, args.model)
+    write_summary_table(all_results, output_path, args.model, notes)
 
     # Light curve plot
     plot_path = os.path.join(BASE_DIR, args.plot)
