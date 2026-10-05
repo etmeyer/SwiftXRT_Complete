@@ -126,20 +126,18 @@ parallel_extract.py --ra 187.2779 --dec 2.0524 --nproc 16   # or in parallel
 
 Both exit non-zero and list the observations that failed, if any.
 
-### Step 8 — Fit spectra and generate light curve (CIAO terminal)
+### Step 8 — Fit spectra and plot the light curve → see [docs/08-fit-and-plot.md](docs/08-fit-and-plot.md)
 
-Run this in a separate CIAO terminal (`setup_swiftxrt; ciao`) — Sherpa only
-exists there. CIAO points `$CALDB` at the Chandra CALDB, so always pass the
-HEASoft CALDB with `--caldb`:
+In a separate CIAO terminal (`setup_swiftxrt; ciao`) — Sherpa only exists
+there. CIAO points `$CALDB` at the Chandra CALDB, so always pass the HEASoft
+CALDB with `--caldb`:
 
 ```bash
-swift_xrt_fit_spectra.py --nh 0.0179 --model simple --caldb /opt/CALDB
+swift_xrt_fit_spectra.py --nh 0.0179 --caldb /opt/CALDB             # one at a time
+parallel_fit.py --nh 0.0179 --caldb /opt/CALDB --nproc 16           # or in parallel
 
-# With intrinsic absorption:
-swift_xrt_fit_spectra.py --nh 0.0179 --redshift 0.158 --caldb /opt/CALDB
-
-# For large datasets, run in parallel:
-parallel_fit.py --nh 0.0179 --model simple --caldb /opt/CALDB --nproc 16
+# With absorption in the source, at its redshift:
+parallel_fit.py --nh 0.0179 --redshift 0.158 --caldb /opt/CALDB --nproc 16
 ```
 
 Output: `fit_results.txt` (table) and `flux_lightcurve.pdf` (νFν and Γ vs. time, with PC and WT points color-coded).
@@ -438,7 +436,7 @@ The summary table includes observation dates and RMF filenames, useful for verif
 
 ### `swift_xrt_fit_spectra.py`
 
-Batch spectral fitting using Sherpa. Fits each grouped spectrum independently with a powerlaw model and produces a combined results table and light curve plot.
+Batch spectral fitting using Sherpa. Fits each grouped spectrum independently with an absorbed power law (W-stat, `wilm` abundances, 1σ errors) and produces a combined results table and light curve plot. See [docs/08-fit-and-plot.md](docs/08-fit-and-plot.md).
 
 **Note:** Run this from the CIAO terminal (Sherpa lives only in CIAO's Python). There, `$CALDB` points to the Chandra CALDB, not the HEASoft CALDB, so pass `--caldb` (e.g. `--caldb /opt/CALDB`) so that Swift RMFs can be found; the script stops with an explanation if neither has them.
 
@@ -451,16 +449,20 @@ Required:
 
 Model selection:
     --model       absorbed (tbabs*ztbabs*powerlaw, requires --redshift)
-                  simple (tbabs*powerlaw, default)
+                  simple (tbabs*powerlaw)
+                  (default: absorbed with --redshift, else simple)
     --redshift    Source redshift (required for absorbed model)
+    --abund       Abundance table for tbabs (default: wilm)
 
 Fitting options:
-    --defgamma    Frozen gamma for low-count spectra (default: 2.0)
+    --stat        wstat (default) or chi2 (the method before Oct 2026)
+    --defgamma    Gamma for spectra under --mingamma counts
+                  (default: median of the free fits in this run)
     --mincounts   Minimum counts to fit at all (default: 40)
     --mingamma    Minimum counts for free gamma (default: 200)
     --emin        Lower energy bound in keV (default: 0.3)
     --emax        Upper energy bound in keV (default: 10.0)
-    --bkg         subtract or none (default: subtract)
+    --bkg         use or none (default: use)
 
 Mode and table selection:
     --modes       pc, wt, or both (default: both)
@@ -480,8 +482,10 @@ Output:
 
 Fitting logic:
     <40 counts:    skipped entirely
-    40–200 counts: gamma frozen to --defgamma, nH and norm free
-    >200 counts:   all parameters free
+    ≥200 counts:   fitted first, all parameters free
+    40–199 counts: fitted next, gamma frozen at the median of the
+                   free fits (or --defgamma)
+    All errors are 1 sigma.
 
 Light curve:
     Upper panel: νFν at 1 keV (erg/cm²/s) on log scale
@@ -565,11 +569,11 @@ All other arguments (--model, --redshift, --caldb, etc.) are
 passed through to swift_xrt_fit_spectra.py.
 
 Example:
-    parallel_fit.py --nh 0.0179 --model simple --caldb /opt/CALDB --nproc 16
+    parallel_fit.py --nh 0.0179 --caldb /opt/CALDB --nproc 16
     parallel_fit.py --nh 0.0179 --redshift 0.158 --caldb /opt/CALDB --nproc 32
 ```
 
-After all chunks complete, results are merged and sorted by OBSID, and `plot_lightcurve.py` is called automatically to generate the combined plot.
+It fits in two phases, like a single run: the spectra with at least `--mingamma` counts first, then the rest with Γ frozen at the median of all those fits. After all chunks complete, results are merged and sorted by OBSID, and `plot_lightcurve.py` is called automatically to generate the combined plot.
 
 ---
 

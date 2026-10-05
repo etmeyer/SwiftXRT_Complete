@@ -6,6 +6,10 @@ Run swift_xrt_fit_spectra.py in parallel by splitting the
 master tables into chunks. Each worker fits a subset of
 observations independently.
 
+As in a single run, spectra with at least --mingamma counts are
+fitted first, with gamma free; the rest are then fitted with gamma
+frozen at the median of all those fits (or --defgamma).
+
 After all workers complete, results are merged into a single
 fit_results.txt and the light curve plot is generated.
 
@@ -23,6 +27,7 @@ import subprocess
 import shutil
 import tempfile
 import importlib.util
+import statistics
 from concurrent.futures import ProcessPoolExecutor, as_completed
 
 from swift_xrt_env import require_fit_caldb, sherpa_missing_message
@@ -147,66 +152,166 @@ def run_fit_chunk(chunk_id, mini_tables, fit_args, base_dir, env):
         shutil.rmtree(tmp_dir, ignore_errors=True)
 
 
-def merge_results(result_files, output_file):
+def read_results_file(filepath):
     """
-    Merge chunk result files into a single fit_results.txt.
-    Preserves the header from the first file and concatenates
-    data rows, sorted by OBSID.
+    Split a fit_results table into its '#' comment lines, column
+    header line, separator line and data lines.
     """
-    header_lines = []
-    data_lines = []
-    header_done = False
+    comments, colhdr, sep, rows = [], None, None, []
+    with open(filepath, 'r') as f:
+        for line in f:
+            stripped = line.strip()
+            if not stripped:
+                continue
+            if stripped.startswith('#'):
+                comments.append(line)
+            elif set(stripped.replace(' ', '')) == {'-'}:
+                sep = sep or line
+            elif stripped.startswith('OBSID'):
+                colhdr = colhdr or line
+            else:
+                rows.append(line)
+    return comments, colhdr, sep, rows
 
-    for rf in sorted(result_files):
-        filepath = os.path.join(BASE_DIR, rf)
-        if not os.path.exists(filepath):
-            continue
-        with open(filepath, 'r') as f:
-            for line in f:
-                stripped = line.strip()
-                if not stripped:
-                    if not header_done:
-                        header_lines.append(line)
-                    continue
-                if stripped.startswith('#'):
-                    if not header_done:
-                        header_lines.append(line)
-                    continue
-                # Separator lines
-                if set(stripped.replace(' ', '')) == {'-'}:
-                    if not header_done:
-                        header_lines.append(line)
-                    continue
-                # Column header
-                if stripped.startswith('OBSID'):
-                    if not header_done:
-                        header_lines.append(line)
-                        # Next separator
-                        header_done = True
-                    continue
-                # Data line
-                data_lines.append(line)
 
-        # Clean up chunk file
-        os.remove(filepath)
+def free_gammas(colhdr, rows):
+    """Photon indices of the rows fitted with gamma free."""
+    names = colhdr.split()
+    ig, ie = names.index('gamma'), names.index('gamma_err')
+    out = []
+    for row in rows:
+        parts = row.split()
+        if len(parts) > ie and parts[ie] != '(frozen)':
+            try:
+                out.append(float(parts[ig]))
+            except ValueError:
+                pass
+    return out
 
-    # Sort data lines by OBSID (first column)
-    data_lines.sort(key=lambda l: l.split()[0] if l.split() else '')
 
-    # Write merged file
+def merge_results(tables, output_file):
+    """
+    Write the chunk tables as one fit_results.txt: every distinct
+    comment line, one column header, and the data rows sorted by
+    OBSID and mode. Returns the number of rows.
+    """
+    comments, colhdr, sep, rows = [], None, None, []
+    for c, h, s_, r in tables:
+        comments += [line for line in c if line not in comments]
+        colhdr, sep = colhdr or h, sep or s_
+        rows += r
+    # The units line last, as in a single run's table
+    comments.sort(key=lambda line: line.startswith('# flux_band'))
+    # By OBSID, then mode (an OBSID can have both), as a single run
+    rows.sort(key=lambda l: (l.split() + ['', '', ''])[0:3:2])
     with open(os.path.join(BASE_DIR, output_file), 'w') as f:
-        for hl in header_lines:
-            f.write(hl)
-        for dl in data_lines:
-            f.write(dl)
-        # Final separator
-        if header_lines:
-            for hl in header_lines:
-                if set(hl.strip().replace(' ', '')) == {'-'}:
-                    f.write(hl)
-                    break
+        f.writelines(comments)
+        f.write('\n')
+        if colhdr:
+            f.write(colhdr)
+        if sep:
+            f.write(sep)
+        f.writelines(rows)
+        if sep:
+            f.write(sep)
+    return len(rows)
 
-    return len(data_lines)
+
+def spectrum_counts(line):
+    """Total counts in a master-table line's grouped spectrum, or None."""
+    from astropy.io import fits
+    import numpy as np
+    parts = line.split()
+    grp = os.path.join(BASE_DIR, parts[0], f'{parts[1]}_grp.pha')
+    try:
+        with fits.open(grp) as hdul:
+            return int(np.sum(hdul[1].data['COUNTS']))
+    except (OSError, KeyError, IndexError, TypeError):
+        return None
+
+
+def run_phase(entries, passthrough, nproc, first_chunk, parent_env):
+    """
+    Fit entries (mode, line, header) in up to nproc chunks. Returns
+    (worker results, next free chunk id).
+    """
+    n_chunks = min(nproc, len(entries))
+    chunk_size = (len(entries) + n_chunks - 1) // n_chunks
+    jobs = []
+    cid = first_chunk
+    for i in range(n_chunks):
+        chunk = entries[i*chunk_size:(i+1)*chunk_size]
+        if not chunk:
+            continue
+        # Separate PC and WT entries
+        pc_lines = [(hdr, line) for mode, line, hdr in chunk
+                    if mode == 'pc']
+        wt_lines = [(hdr, line) for mode, line, hdr in chunk
+                    if mode == 'wt']
+        mini_tables = {}
+        if pc_lines:
+            mpath = os.path.join(BASE_DIR, f'.pc_fit_chunk_{cid:02d}.txt')
+            write_mini_table(pc_lines[0][0],
+                             [l for _, l in pc_lines], mpath)
+            mini_tables['pc'] = mpath
+        if wt_lines:
+            mpath = os.path.join(BASE_DIR, f'.wt_fit_chunk_{cid:02d}.txt')
+            write_mini_table(wt_lines[0][0],
+                             [l for _, l in wt_lines], mpath)
+            mini_tables['wt'] = mpath
+        chunk_args = list(passthrough)
+        if mini_tables.keys() == {'pc'}:
+            chunk_args.extend(['--modes', 'pc'])
+        elif mini_tables.keys() == {'wt'}:
+            chunk_args.extend(['--modes', 'wt'])
+        else:
+            chunk_args.extend(['--modes', 'both'])
+        jobs.append((cid, mini_tables, chunk_args))
+        cid += 1
+
+    print(f"Launching {len(jobs)} fitting workers...", flush=True)
+    results = []
+    with ProcessPoolExecutor(max_workers=nproc) as executor:
+        futures = {}
+        for jid, mtabs, cargs in jobs:
+            future = executor.submit(
+                run_fit_chunk, jid, mtabs, cargs, BASE_DIR, parent_env)
+            futures[future] = jid
+        print(f"  All {len(futures)} workers submitted. "
+              f"Waiting for results...\n", flush=True)
+        for future in as_completed(futures):
+            jid = futures[future]
+            result = future.result()
+            results.append(result)
+            status = 'OK' if result['returncode'] == 0 else 'FAIL'
+            print(f"  Chunk {jid:02d}: {status} "
+                  f"[{len(results)}/{len(futures)} done]", flush=True)
+            if result['returncode'] != 0:
+                # Per-OBSID failures are reported on stdout,
+                # crashes on stderr.
+                for tail in (result['stdout_tail'],
+                             result['stderr_tail']):
+                    for line in tail.strip().splitlines()[-3:]:
+                        print(f"    {line}", flush=True)
+
+    for _, mtabs, _ in jobs:
+        for mpath in mtabs.values():
+            if os.path.exists(mpath):
+                os.remove(mpath)
+    return results, cid
+
+
+def collect_tables(results):
+    """Read and remove the chunk tables a phase wrote."""
+    tables = []
+    for r in results:
+        if not r['results_file']:
+            continue
+        path = os.path.join(BASE_DIR, r['results_file'])
+        if os.path.exists(path):
+            tables.append(read_results_file(path))
+            os.remove(path)
+    return tables
 
 
 def main():
@@ -220,15 +325,18 @@ def main():
     # Pass-through to fit script
     parser.add_argument('--nh', type=float, required=True)
     parser.add_argument('--redshift', type=float, default=None)
-    parser.add_argument('--model', type=str, default='simple',
+    parser.add_argument('--model', type=str, default=None,
                         choices=['absorbed', 'simple'])
-    parser.add_argument('--defgamma', type=float, default=2.0)
+    parser.add_argument('--defgamma', type=float, default=None)
+    parser.add_argument('--stat', type=str, default='wstat',
+                        choices=['wstat', 'chi2'])
+    parser.add_argument('--abund', type=str, default='wilm')
     parser.add_argument('--mincounts', type=int, default=40)
     parser.add_argument('--mingamma', type=int, default=200)
     parser.add_argument('--emin', type=float, default=0.3)
     parser.add_argument('--emax', type=float, default=10.0)
-    parser.add_argument('--bkg', type=str, default='subtract',
-                        choices=['subtract', 'none'])
+    parser.add_argument('--bkg', type=str, default='use',
+                        choices=['use', 'none', 'subtract'])
     parser.add_argument('--caldb', type=str, default=None)
     parser.add_argument('--modes', type=str, default='both',
                         choices=['pc', 'wt', 'both'])
@@ -242,6 +350,15 @@ def main():
                         default='flux_lightcurve.pdf')
     args = parser.parse_args()
 
+    # Same default as swift_xrt_fit_spectra.py: the intrinsic
+    # absorber only when there is a redshift to put it at.
+    if args.model is None:
+        args.model = 'absorbed' if args.redshift is not None \
+            else 'simple'
+    if args.model == 'absorbed' and args.redshift is None:
+        print("ERROR: --redshift is required for the 'absorbed' model.")
+        sys.exit(1)
+
     # Workers run with this same Python and environment, so check
     # Sherpa and the CALDB once here instead of failing in every chunk.
     if not args.dryrun:
@@ -252,7 +369,7 @@ def main():
 
     # Build pass-through arguments
     passthrough = ['--nh', str(args.nh), '--model', args.model,
-                   '--defgamma', str(args.defgamma),
+                   '--stat', args.stat, '--abund', args.abund,
                    '--mincounts', str(args.mincounts),
                    '--mingamma', str(args.mingamma),
                    '--emin', str(args.emin),
@@ -263,8 +380,8 @@ def main():
     if args.caldb:
         passthrough.extend(['--caldb', args.caldb])
 
-    # Read all entries and split
-    all_entries = []  # (mode, line)
+    # Read all entries
+    all_entries = []  # (mode, line, header)
 
     if args.modes in ('pc', 'both'):
         pc_path = os.path.join(BASE_DIR, args.pctable)
@@ -286,56 +403,26 @@ def main():
         print("No observations to fit.")
         sys.exit(0)
 
-    total = len(all_entries)
-    n_chunks = min(args.nproc, total)
-    chunk_size = (total + n_chunks - 1) // n_chunks
-
-    print(f"Total: {total} observations → {n_chunks} chunks "
-          f"of ~{chunk_size}")
+    # Two phases, as in swift_xrt_fit_spectra.py: gamma free for
+    # spectra with at least --mingamma counts, then the rest with gamma
+    # frozen at the median of all those fits (or --defgamma). Splitting
+    # one run across chunks would otherwise give each chunk its own
+    # median.
+    low = []
+    high = []
+    for entry in all_entries:
+        c = spectrum_counts(entry[1])
+        if c is not None and args.mincounts <= c < args.mingamma:
+            low.append(entry)
+        else:
+            high.append(entry)
+    print(f"Total: {len(all_entries)} observations: {len(high)} with "
+          f"gamma free, then {len(low)} under {args.mingamma} counts "
+          f"with gamma frozen")
 
     if args.dryrun:
         print("\n[DRY RUN] No fitting performed.")
         return
-
-    # Split into chunks, each chunk may have both PC and WT entries
-    jobs = []
-    for i in range(n_chunks):
-        chunk = all_entries[i*chunk_size:(i+1)*chunk_size]
-        if not chunk:
-            continue
-
-        # Separate PC and WT entries
-        pc_lines = [(hdr, line) for mode, line, hdr in chunk
-                     if mode == 'pc']
-        wt_lines = [(hdr, line) for mode, line, hdr in chunk
-                     if mode == 'wt']
-
-        mini_tables = {}
-        if pc_lines:
-            mpath = os.path.join(BASE_DIR,
-                                  f'.pc_fit_chunk_{i:02d}.txt')
-            write_mini_table(pc_lines[0][0],
-                              [l for _, l in pc_lines], mpath)
-            mini_tables['pc'] = mpath
-        if wt_lines:
-            mpath = os.path.join(BASE_DIR,
-                                  f'.wt_fit_chunk_{i:02d}.txt')
-            write_mini_table(wt_lines[0][0],
-                              [l for _, l in wt_lines], mpath)
-            mini_tables['wt'] = mpath
-
-        # Set mode for this chunk
-        chunk_args = list(passthrough)
-        if mini_tables.keys() == {'pc'}:
-            chunk_args.extend(['--modes', 'pc'])
-        elif mini_tables.keys() == {'wt'}:
-            chunk_args.extend(['--modes', 'wt'])
-        else:
-            chunk_args.extend(['--modes', 'both'])
-
-        jobs.append((i, mini_tables, chunk_args))
-
-    print(f"\nLaunching {len(jobs)} fitting workers...", flush=True)
 
     # Capture the current environment so it propagates correctly
     # to subprocesses spawned by workers. CIAO and HEASoft set
@@ -344,56 +431,51 @@ def main():
     # and XSPEC model libraries to function.
     parent_env = os.environ.copy()
 
-    results = []
-    with ProcessPoolExecutor(max_workers=args.nproc) as executor:
-        futures = {}
-        for cid, mtabs, cargs in jobs:
-            future = executor.submit(
-                run_fit_chunk, cid, mtabs, cargs, BASE_DIR,
-                parent_env)
-            futures[future] = cid
+    results, tables = [], []
+    next_chunk = 0
+    if high:
+        print()
+        r, next_chunk = run_phase(high, passthrough, args.nproc,
+                                  next_chunk, parent_env)
+        results += r
+        tables += collect_tables(r)
 
-        print(f"  All {len(futures)} workers submitted. "
-              f"Waiting for results...\n", flush=True)
-
-        for future in as_completed(futures):
-            cid = futures[future]
-            result = future.result()
-            results.append(result)
-            status = 'OK' if result['returncode'] == 0 else 'FAIL'
-            print(f"  Chunk {cid:02d}: {status} "
-                  f"[{len(results)}/{len(futures)} done]",
-                  flush=True)
-            if result['returncode'] != 0:
-                # Per-OBSID failures are reported on stdout,
-                # crashes on stderr.
-                for tail in (result['stdout_tail'],
-                             result['stderr_tail']):
-                    for line in tail.strip().splitlines()[-3:]:
-                        print(f"    {line}", flush=True)
-
-    # Clean up mini-tables
-    for _, mtabs, _ in jobs:
-        for mpath in mtabs.values():
-            if os.path.exists(mpath):
-                os.remove(mpath)
+    if low:
+        if args.defgamma is not None:
+            gamma, note = args.defgamma, '--defgamma'
+        else:
+            gammas = []
+            for _, colhdr, _, rows in tables:
+                if colhdr:
+                    gammas += free_gammas(colhdr, rows)
+            if gammas:
+                gamma = statistics.median(gammas)
+                note = f'median of {len(gammas)} free fits'
+            else:
+                gamma, note = 2.0, \
+                    'no free fits to take a median from; default'
+        print(f"\n{len(low)} spectra under {args.mingamma} counts: "
+              f"gamma frozen at {gamma:.3f} ({note})")
+        # '=' keeps a note such as '--defgamma' from reading as an option
+        r, next_chunk = run_phase(
+            low, passthrough + ['--defgamma', f'{gamma:.4f}',
+                                f'--defgamma-note={note}'],
+            args.nproc, next_chunk, parent_env)
+        results += r
+        tables += collect_tables(r)
 
     # Merge results. A chunk with one failed OBSID exits non-zero but
-    # still wrote valid results for the rest, so merge every results
-    # file that exists.
-    result_files = [r['results_file'] for r in results
-                    if r['results_file'] and
-                    os.path.exists(os.path.join(BASE_DIR,
-                                                r['results_file']))]
-
-    if result_files:
-        n_merged = merge_results(result_files, args.output)
-        print(f"\nMerged {n_merged} results into {args.output}")
+    # still wrote valid results for the rest, so merge every table
+    # that exists.
+    if tables:
+        n_merged = merge_results(tables, args.output)
+        print(f"\nMerged {n_merged} results into {args.output}",
+              flush=True)
 
         # Generate the combined plot using plot_lightcurve.py
         plot_script = os.path.join(SCRIPT_DIR, 'plot_lightcurve.py')
         if os.path.exists(plot_script):
-            print(f"Generating light curve plot...")
+            print(f"Generating light curve plot...", flush=True)
             subprocess.run(
                 [sys.executable, plot_script,
                  '--input', args.output,

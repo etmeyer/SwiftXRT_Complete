@@ -741,9 +741,9 @@ def run_grppha(src_pha, out_pha, bkg_pha, arf_file, rmf_path,
       2. Mark channels 0-29 as bad (below ~0.3 keV, unreliable).
       3. Group to a minimum number of counts per bin.
 
-    The grouping threshold controls the statistics:
-      - min_counts=20: suitable for chi-squared fitting
-      - min_counts=1:  use with Cash statistics (cstat) in XSPEC
+    Step 8 fits these bins with W-stat, which is unbiased on 20-count
+    bins. Don't go down to 1-count bins: nearly empty WT background
+    bins then pull W-stat fluxes low (19% at ~100 counts).
 
     Returns True on success.
     """
