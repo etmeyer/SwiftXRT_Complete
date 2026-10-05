@@ -17,7 +17,7 @@ For a one-source quick-start example, see the [README](../README.md).
 | 4 | [Survey observations](04-survey.md) | `swift_xrt_summary.py` | either | Per-OBSID targets, pointing offsets, modes, exposures, orbits |
 | 5 | [PC-mode inspection](05-pc-inspection.md) | `swift_xrt_king_profile.py`, `swift_pc_source_viewer.py`, PC master table | either | Pile-up + source images + PC master selection table |
 | 6 | [WT-mode inspection](06-wt-inspection.md) | `swift_wt_summary_viewer.py`, `make_wt_master_table.py` | either | WT 1D-strip profiles + WT master selection table |
-| 7 | [Extract spectra](07-extract.md) | `parallel_extract.py` (or `swift_xrt_extract_spectra.py`) | HEASoft | Per-OBSID source/background extraction + grouping |
+| 7 | [Extract spectra](07-extract.md) | `parallel_extract.py` (or `swift_xrt_extract_spectra.py`) | HEASoft | Source and background spectra, ARFs, RMFs, grouping |
 | 8 | [Fit and plot](08-fit-and-plot.md) | `parallel_fit.py` (or `swift_xrt_fit_spectra.py`), `plot_lightcurve.py` | CIAO, with `--caldb` | Spectral fits + νFν light curve |
 
 **Two terminals.** Steps 2–7 run in a HEASoft terminal
