@@ -357,6 +357,12 @@ def fit_spectrum(grp_pha, nh_gal, redshift, gamma_value,
                 # BACKSCAL keywords scale it to the source region.
                 if stat == 'chi2':
                     shp.subtract(1)
+            elif bkg_mode == 'none':
+                # load_pha attached the BACKFILE background; drop it, or
+                # Sherpa warns at every fit that it is being ignored.
+                data = shp.get_data(1)
+                for bkg_id in list(data.background_ids):
+                    data.delete_background(bkg_id)
 
         # Set analysis to energy units (keV) so that ignore/notice
         # commands accept energy values rather than channel integers.
