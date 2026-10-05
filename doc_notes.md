@@ -157,7 +157,9 @@ stayed `yes`. Other findings:
   layout: `find_auxiliary_files` looks for `sw<OBSID>*pat|sat.fits*` and
   `*xhd.hk*` in the output folder, but the attitude file stays in
   `XRT_input/<OBSID>/auxil/` and xrtpipeline writes `xhdtc.hk`. So Step 7
-  always uses xrtpipeline's `*_ex.img`, and fails without it. For 1.2.7.doc.
+  always uses xrtpipeline's `*_ex.img`, and fails without it. 1.2.7.doc:
+  documented; the warning now names the missing `<stem>_ex.img` instead
+  of blaming att/hk files. The dead branch is left in place.
 - **The King profile and PC viewer read every `*xpc*_cl.evt`**, not just
   pointed ones (the WT tools and both master tables take `po` only).
   Harmless for 3C 273, whose PC data are all pointed, but a PC settling or
@@ -226,12 +228,14 @@ Findings:
   from 20–24″ to the core deficit at 10–12″. The off-axis pointing misses
   the bad columns and never showed the bump.
 - **The fitter freezes Γ at `--defgamma` 2.0 below `--mingamma` 200
-  counts.** For 3C 273 (Γ ≈ 1.5) that biases the 1 keV flux of short PC
-  snapshots such as 043 (84 counts at its new 13.7″). For 1.2.8.
-- **Overrides reach extraction only through `_pileup.txt`.** Extraction
-  never reads `pileup_overrides.txt`, though `parallel_extract.py` symlinks
-  it into each chunk dir as if it did. Documented ("re-run 5a"); for
-  1.2.7 to decide whether extraction should read the file directly.
+  counts.** For 3C 273 (Γ ≈ 1.5) that biases the 0.3–10 keV flux of short
+  PC snapshots such as 043 (84 counts at its new 13.7″); measured in
+  1.2.7 (below): −26% to −36%, while the 1 keV flux density moves ~1%.
+  For 1.2.8.
+- ~~**Overrides reach extraction only through `_pileup.txt`.**~~ Kept that
+  way in 1.2.7 (one source of truth, and re-running 5a shows the override
+  on the plot); `parallel_extract.py` no longer symlinks the overrides
+  file into chunk dirs.
 - **Extraction ignores the pile-up radius, overrides included, below 0.5
   ct/s** of whole-field rate (`get_inner_radius`). Documented.
 - **`badstripe` is parsed by the extractor and never used.** Documented as
@@ -280,3 +284,46 @@ Logged during **1.2.7.doc** (Step 7, `docs/step7-extract`).
   scatter around the median of WT points within 3 days drops from 17.2%
   to 4.7% rms (unaffected points: 5.5%). Any earlier WT light curve from
   this pipeline has the same problem for OBSIDs with a settling map.
+- Writing the page turned up, and this branch fixes: the log now names the
+  exposure map; `Bins` counts usable bins only (043 showed 488 bin starts
+  for 4 usable bins); WT radii in the summary are in arcsec like PC;
+  `parallel_extract.py` reports the chunks it made (it said 16 WT chunks
+  for 14), lists failed chunks before exiting, and no longer links
+  `pileup_overrides.txt`; the missing-exposure-map warning says what is
+  missing; the background-annulus docstring no longer claims the PSF is
+  zero there.
+- ~~**Long paths broke extraction.**~~ FIXED: xselect got absolute paths
+  and wrote nothing once `XRT_output`'s path passed ~90 characters (90
+  worked, 95 failed); `parallel_extract.py`'s chunk dirs add 21, so it
+  failed from ~70 (75 failed in parallel, worked serially). grppha has a
+  similar limit (~150). Both now get paths relative to the working
+  directory; serial extraction works to 180 characters, parallel to 153;
+  beyond ~200 xselect fails naming its own work files in the cwd.
+  Documented (gotcha 7, and Step 1's path gotcha updated).
+- **The PC background annulus (100–160″) is mostly PSF wings for a bright
+  source.** 073: exposure-corrected 9.5e-3 (100–130″), 4.5e-3 (130–160″),
+  1.2e-3 (250–300″), 8.5e-4 ct/s/arcmin² (300–400″); ~87% of the 546
+  counts are source. Scaled (0.1265) they are 1.6% of the source counts,
+  so piled-up PC fluxes are ~1.5% low; a full 47″ circle ~0.3% (King
+  model). Documented. Possible improvement: a farther annulus (e.g.
+  200–300″) for piled-up sources, if the window allows.
+- **`--ra`/`--dec` are required but only written to the PC log**; positions
+  come from `_pileup.txt` / `_wt_profile.txt`. **`--wt-*` radii apply only
+  without a `_wt_profile.txt`.** Both documented.
+- **Open: extraction's WT fallback position** (median of all events) and
+  **no exclusion of other sources from background regions**. Documented.
+- **For 1.2.8 — the fit statistic (user asked whether C-stat is chosen
+  dynamically; it isn't).** The fitter always uses chi2datavar on
+  background-subtracted spectra grouped to ≥20 counts. Simulations
+  (`test_runs/stat/`: compare.py, sim2.json; 400 fakes per row from the
+  029 WT and 073 PC fits, true flux known): chi2datavar is 3–4% low at
+  845–22,000 counts (up to 3σ for the brightest), −9% at ~210 counts,
+  −26%/−36% at ~100 counts where Γ is frozen at 2.0. W-stat on the same
+  20-count bins is within 1% from ~200 counts up, +3–5% at ~100 (scatter
+  18–28%). W-stat on 1-count bins is biased low in WT (−19% at 110
+  counts, −1.6% at 5500): empty background bins, as the XSPEC manual
+  warns; ≥5 counts/bin is fine. On the 85 real epoch-1 spectra with Γ
+  free, W-stat (same bins) fluxes are 2.9–6.7% higher (median 4.3%,
+  0.9–3.3σ), Γ unchanged. Refs: Humphrey, Liu & Buote 2009 (ApJ 693,
+  822); XSPEC manual Appendix B. Also: `run_grppha`'s docstring suggests
+  `min_counts=1` for cstat, which is wrong for WT W-stat.

@@ -168,8 +168,9 @@ detection_sigma = 73.2
 source_detected = yes
 ```
 
-Step 7 reads the position, the radii, the plate scale and the BACKSCAL
-values. The table in 6b reads `source_detected` and `detection_sigma`.
+Step 7 reads the position, the radii and the plate scale, and computes the
+same BACKSCAL values from the radii. The table in 6b reads
+`source_detected` and `detection_sigma`.
 
 ### What to look for
 

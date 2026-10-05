@@ -280,9 +280,9 @@ swift_xrt_doctor.py --no-color
 - **Use the conda `-p` (prefix) form, not `-n` (name), for CIAO.** CIAO is
   registered by path, so `conda install -n ciao-4.16 ...` silently does
   nothing; use `conda install -p /opt/ciao/ciao-4.16 ...`.
-- **Keep working-directory paths reasonably short.** `xselect` reported
-  writing a spectrum but produced no file when the full path was ~140
-  characters; ~100-character paths work.
+- **Keep the path to `XRT_output` under about 150 characters.** Beyond
+  that, xselect cannot name its working files and Step 7 fails
+  ([Step 7, gotcha 7](07-extract.md#gotchas)).
 - **Site-wide vs. single-user.** On a shared box, define the commands in
   `/etc/bash.bashrc.local` so every user inherits them. A `~/.bashrc` install
   only sets things up for the one user who did it.

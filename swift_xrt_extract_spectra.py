@@ -350,10 +350,13 @@ def find_background_region(evt_file, xc, yc, plate_scale,
     Determine a background region that avoids the source.
 
     Strategy: Use a large annulus centered on the source, far
-    enough away that the PSF contribution is negligible. The
-    default range of 100-160 arcsec is well outside the XRT PSF
-    (which is effectively zero beyond ~60-70 arcsec) but still
-    on the detector.
+    out in the PSF wings but still on the detector. The wings are
+    not negligible there for a bright source: 3C 273 (073) is
+    about 8 times brighter at 100-160 arcsec than beyond 300
+    arcsec, so most of the annulus counts are the source's. Scaled
+    to a piled-up source's annulus they are 1.6% of its counts, so
+    the subtraction lowers such fluxes by about 1.5%; for a full
+    47 arcsec circle the effect is a few tenths of a percent.
 
     We verify that the region actually contains events (i.e.,
     is on the detector). If not, we shrink the outer radius
@@ -492,11 +495,18 @@ def extract_spectrum_xselect(evt_file, region_file, output_pha,
     within a given region.
 
     xselect is driven via stdin commands piped to the process.
+
+    Paths are given relative to the working directory (OBSID/file,
+    about 40 characters). With absolute paths xselect reported
+    writing the spectrum but wrote nothing once XRT_output's path
+    passed about 90 characters, or about 70 under parallel_extract.py,
+    whose chunk folders add 21.
     """
-    evt_dir = os.path.dirname(os.path.abspath(evt_file))
+    evt_dir = os.path.relpath(os.path.dirname(os.path.abspath(evt_file)))
     evt_name = os.path.basename(evt_file)
     output_pha_abs = os.path.abspath(output_pha)
-    region_abs = os.path.abspath(region_file)
+    output_pha_rel = os.path.relpath(output_pha_abs)
+    region_rel = os.path.relpath(region_file)
 
     # xselect commands
     # Note: we use 'no' for saved session, set the data directory
@@ -507,9 +517,9 @@ read event
 {evt_dir}
 {evt_name}
 yes
-filter region {region_abs}
+filter region {region_rel}
 extract spectrum
-save spectrum {output_pha_abs}
+save spectrum {output_pha_rel}
 exit
 no
 """
@@ -739,6 +749,10 @@ def run_grppha(src_pha, out_pha, bkg_pha, arf_file, rmf_path,
     """
     src_abs = os.path.abspath(src_pha)
     out_abs = os.path.abspath(out_pha)
+    # Relative paths, as for xselect: grppha could not open its input
+    # once XRT_output's path was ~150 characters.
+    src_rel = os.path.relpath(src_abs)
+    out_rel = os.path.relpath(out_abs)
 
     # The background and ARF sit next to the grouped spectrum, so
     # record them by bare filename: fitting tools resolve relative
@@ -753,8 +767,8 @@ def run_grppha(src_pha, out_pha, bkg_pha, arf_file, rmf_path,
     # grppha prompts: input file, output file, then GRPPHA[] commands
     # Note: RMF path uses $CALDB for portability
     commands = (
-        f"{src_abs}\n"
-        f"{out_abs}\n"
+        f"{src_rel}\n"
+        f"{out_rel}\n"
         f"bad 0-29\n"
         f"chkey backfile {bkg_name}\n"
         f"chkey ancrfile {arf_name}\n"
@@ -809,8 +823,15 @@ def get_spectrum_info(pha_file):
 
         # Count grouped bins if GROUPING column exists
         if 'GROUPING' in data.columns.names:
-            # In OGIP standard, GROUPING=1 marks start of a new bin
-            info['n_grouped_bins'] = int(np.sum(data['GROUPING'] == 1))
+            # In OGIP standard, GROUPING=1 marks start of a new bin.
+            # Bins grppha marked bad (channels below 0.3 keV, and the
+            # leftover high channels that never reach the minimum)
+            # don't count: 043's 84-count spectrum has 4 usable bins
+            # among 488 bin starts.
+            starts = data['GROUPING'] == 1
+            if 'QUALITY' in data.columns.names:
+                starts &= data['QUALITY'] == 0
+            info['n_grouped_bins'] = int(np.sum(starts))
         else:
             info['n_grouped_bins'] = None
 
@@ -1054,8 +1075,8 @@ def process_pc_observation(entry, ra_src, dec_src, r_outer,
             print(f"  Using existing exposure map: "
                   f"{os.path.basename(expo_file)}")
         else:
-            print(f"  WARNING: cannot generate exposure map "
-                  f"(missing att/hk files).")
+            print(f"  WARNING: no exposure map {stem}_ex.img; Step 3 "
+                  f"makes one unless run with --createexpomap no.")
 
     # ---- Generate ARF ----
     arf_file = os.path.join(obsid_path, f'{stem}.arf')
@@ -1132,6 +1153,7 @@ def process_pc_observation(entry, ra_src, dec_src, r_outer,
         f.write(f"Grouped bins   : {summary['n_grouped_bins']}\n")
         f.write(f"Min cts/bin    : {min_counts}\n\n")
         f.write(f"ARF            : {os.path.basename(arf_file)}\n")
+        f.write(f"Exposure map   : {os.path.basename(expo_file)}\n")
         f.write(f"RMF            : {rmf_path}\n\n")
         f.write(f"Output files:\n")
         f.write(f"  {stem}_src.pha   (source spectrum)\n")
@@ -1288,7 +1310,8 @@ def process_wt_observation(entry, min_counts,
             print(f"  Using existing exposure map: "
                   f"{os.path.basename(expo_file)}")
         else:
-            print(f"  WARNING: cannot generate exposure map.")
+            print(f"  WARNING: no exposure map {stem}_ex.img; Step 3 "
+                  f"makes one unless run with --createexpomap no.")
 
     # ---- Generate ARF ----
     arf_file = os.path.join(obsid_path, f'{stem}.arf')
@@ -1326,7 +1349,8 @@ def process_wt_observation(entry, min_counts,
         'stem': stem,
         'mode': 'WT',
         'r_inner': 0.0,
-        'r_outer': float(src_radius),
+        # arcsec, like the PC rows of the summary table
+        'r_outer': src_radius * plate_scale,
         'src_counts': src_info['total_counts'],
         'bkg_counts': bkg_spec_info['total_counts'],
         'exposure': src_info['exposure'],
@@ -1365,6 +1389,7 @@ def process_wt_observation(entry, min_counts,
         f.write(f"Grouped bins   : {summary['n_grouped_bins']}\n")
         f.write(f"Min cts/bin    : {min_counts}\n\n")
         f.write(f"ARF            : {os.path.basename(arf_file)}\n")
+        f.write(f"Exposure map   : {os.path.basename(expo_file)}\n")
         f.write(f"RMF            : {rmf_path}\n\n")
         f.write(f"Output files:\n")
         f.write(f"  {stem}_src.pha   (source spectrum)\n")
@@ -1517,9 +1542,10 @@ def main():
         print(f"\n\n{'='*130}")
         print(f"  EXTRACTION SUMMARY")
         print(f"{'='*130}")
+        rin_h, rout_h = 'Rin"', 'Rout"'     # radii in arcsec
         hdr = (f"  {'OBSID':<14} {'File':<30} {'Mode':>4} "
                f"{'Date-Obs':<12} "
-               f"{'Rin':>5} {'Rout':>5} "
+               f"{rin_h:>5} {rout_h:>5} "
                f"{'SrcCts':>7} {'BkgCts':>7} {'Exp(s)':>8} "
                f"{'Bins':>5}  {'RMF'}")
         print(hdr)

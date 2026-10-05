@@ -114,20 +114,14 @@ make_wt_master_table.py                                 # 6b: the WT master tabl
 
 **6c.** Edit `pc_master_table.txt` and `wt_master_table.txt`: set `include` to `no` for any observation you want to exclude, with the reason in the comment. Re-running `make_wt_master_table.py` overwrites your edits; use `--output` to write a new file instead.
 
-### Step 7 — Extract spectra (HEASoft terminal)
+### Step 7 — Extract spectra → see [docs/07-extract.md](docs/07-extract.md)
 
-Run this in the HEASoft terminal (`setup_swiftxrt; heainit`, **no** `ciao`);
-the scripts refuse to start in a CIAO terminal.
+In the HEASoft terminal (`setup_swiftxrt; heainit`, **no** `ciao`); the
+scripts refuse to start in a CIAO terminal.
 
 ```bash
-swift_xrt_extract_spectra.py --ra 187.2779 --dec 2.0524
-
-# Or one mode at a time:
-swift_xrt_extract_spectra.py --ra 187.2779 --dec 2.0524 --mode pc
-swift_xrt_extract_spectra.py --ra 187.2779 --dec 2.0524 --mode wt
-
-# For large datasets, run in parallel:
-parallel_extract.py --ra 187.2779 --dec 2.0524 --nproc 16
+swift_xrt_extract_spectra.py --ra 187.2779 --dec 2.0524     # one at a time
+parallel_extract.py --ra 187.2779 --dec 2.0524 --nproc 16   # or in parallel
 ```
 
 Both exit non-zero and list the observations that failed, if any.
@@ -391,7 +385,7 @@ Observations below the exposure threshold, or whose `_wt_profile.txt` says the s
 
 ### `swift_xrt_extract_spectra.py`
 
-Automated spectral extraction for both PC and WT modes. Calls HEASoft FTOOLS (`xselect`, `xrtexpomap`, `xrtmkarf`, `grppha`) to produce grouped spectra ready for fitting.
+Automated spectral extraction for both PC and WT modes. Calls HEASoft FTOOLS (`xselect`, `xrtmkarf`, `grppha`), with the exposure maps xrtpipeline made in Step 3, to produce grouped spectra ready for fitting. See [docs/07-extract.md](docs/07-extract.md).
 
 ```
 Usage:
@@ -409,7 +403,7 @@ PC options:
     --bkg-inner   Background inner radius in arcsec (default: 100)
     --bkg-outer   Background outer radius in arcsec (default: 160)
 
-WT options:
+WT options (used only where there is no _wt_profile.txt):
     --wt-srcrad     Source radius in pixels (default: 20)
     --wt-bkginner   Background inner radius in pixels (default: 80)
     --wt-bkgouter   Background outer radius in pixels (default: 120)
@@ -424,6 +418,7 @@ Required input files:
     wt_master_table.txt       (for WT mode)
     {stem}_pileup.txt         (for PC: from king_profile script)
     {stem}_wt_profile.txt     (for WT: from wt_summary_viewer, optional)
+    {stem}_ex.img             (exposure map, from xrtpipeline in Step 3)
 
 Output (per observation):
     {stem}_src.reg            DS9 source region
@@ -437,7 +432,7 @@ Output (per observation):
 
 **PC mode** uses pile-up radii from `_pileup.txt` to set annular source regions when needed. The outer radius can be fixed or auto-optimized based on signal-to-noise.
 
-**WT mode** uses circular source regions and annular backgrounds. After extraction, BACKSCAL keywords are corrected for WT 1D geometry (source BACKSCAL = 2×r, background BACKSCAL = r_outer − r_inner − 1), following the [UK SSDC standard](https://www.swift.ac.uk/analysis/xrt/backscal.php).
+**WT mode** uses the source position and radii from `_wt_profile.txt` (circular source region, annular background). After extraction, BACKSCAL keywords are corrected for WT 1D geometry (source BACKSCAL = 2×r, background BACKSCAL = r_outer − r_inner − 1), following the [UK SSDC standard](https://www.swift.ac.uk/analysis/xrt/backscal.php).
 
 The summary table includes observation dates and RMF filenames, useful for verifying that the CALDB selects the correct response (e.g., `s0` for pre-Sept 2007, `s6` for post-Sept 2007 substrate voltage change).
 
@@ -546,6 +541,8 @@ passed through to swift_xrt_extract_spectra.py.
 
 Full per-chunk logs: parallel_extract_logs/chunkNN_<mode>.log
 (the console shows only a short tail for failed chunks).
+At the end it checks that every included observation got a new
+_grp.pha, and exits non-zero if not or if any chunk failed.
 
 Example:
     parallel_extract.py --ra 187.2779 --dec 2.0524 --nproc 16
