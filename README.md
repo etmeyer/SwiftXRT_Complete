@@ -7,7 +7,9 @@ Developed for analysis of point sources (e.g., blazars, AGN) observed across mul
 **Author:** Eileen T. Meyer ([@etmeyer](https://github.com/etmeyer))  
 **License:** MIT
 
-> **Documentation:** see [docs/](docs/index.md) for the full step-by-step walkthrough.
+> **Documentation:** the full step-by-step walkthrough is at
+> **<https://etmeyer.github.io/SwiftXRT_Complete/>** (sidebar and search),
+> built from [docs/](docs/index.md).
 
 ---
 

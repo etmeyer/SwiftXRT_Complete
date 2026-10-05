@@ -5,7 +5,9 @@ includes mechanism, inputs/outputs, gotchas, and space for your own notes as
 you work through it.
 
 For installation and environment setup, start at [Step 1](01-setup.md).
-For a one-source quick-start example, see the [README](../README.md).
+If you ran the pipeline before October 2026, see
+[Re-running after the October 2026 changes](rerun-2026-10.md).
+For a one-source quick-start example, see the [README](https://github.com/etmeyer/SwiftXRT_Complete/blob/main/README.md).
 
 ## Workflow
 
@@ -30,3 +32,10 @@ For a one-source quick-start example, see the [README](../README.md).
 Read top-to-bottom in order — each page assumes the previous step's outputs.
 Each page ends with a "Notes" section where you can drop your own
 observations as you work through; use it freely.
+
+The pages are published at <https://etmeyer.github.io/SwiftXRT_Complete/>,
+with a sidebar and search, and GitHub shows them in `docs/` too. On
+amorgos you can read one in the terminal with
+`python3 -m rich.markdown -p docs/05-pc-inspection.md`. To preview the
+website from a checkout: `pip install mkdocs-material`, then `mkdocs serve`
+in the repository folder.
