@@ -44,8 +44,10 @@ import os
 import sys
 import re
 import glob
+import ctypes
 import argparse
 import warnings
+import contextlib
 import numpy as np
 
 try:
@@ -76,6 +78,37 @@ except ImportError:
 
 
 BASE_DIR = os.path.abspath(os.getcwd())
+
+
+@contextlib.contextmanager
+def _quiet_c_output():
+    """
+    Silence output that C and Fortran code writes straight to the
+    process (the XSPEC library's tbabs banner and its "Solar Abundance
+    Vector set to ..." line). Redirecting sys.stdout misses it, and
+    the buffered banner then appeared when the script exited.
+    """
+    try:
+        libc = ctypes.CDLL(None)
+    except OSError:
+        libc = None
+    sys.stdout.flush()
+    sys.stderr.flush()
+    saved = [os.dup(1), os.dup(2)]
+    devnull = os.open(os.devnull, os.O_WRONLY)
+    try:
+        os.dup2(devnull, 1)
+        os.dup2(devnull, 2)
+        yield
+    finally:
+        if libc is not None:
+            libc.fflush(None)
+        sys.stdout.flush()
+        sys.stderr.flush()
+        os.dup2(saved[0], 1)
+        os.dup2(saved[1], 2)
+        for fd in saved + [devnull]:
+            os.close(fd)
 
 
 # ---------------------------------------------------------------
@@ -232,7 +265,8 @@ def _get_header_paths(pha_file, caldb_override=None):
 
 def fit_spectrum(grp_pha, nh_gal, redshift, gamma_value,
                  freeze_gamma, emin, emax, caldb_override=None,
-                 bkg_mode='use', model_type='absorbed', stat='wstat'):
+                 bkg_mode='use', model_type='absorbed', stat='wstat',
+                 abund='wilm'):
     """
     Fit a single grouped PHA spectrum using Sherpa.
 
@@ -341,14 +375,13 @@ def fit_spectrum(grp_pha, nh_gal, redshift, gamma_value,
             print(f"    SKIPPED: only {n_noticed} noticed bins.")
             return 'skipped'
 
-        # Define the model.
-        # Suppress the tbvabs version banner that the XSPEC model
-        # library prints to stdout/stderr on first use.
-        _so, _se = sys.stdout, sys.stderr
-        devnull = open(os.devnull, 'w')
-        try:
-            sys.stdout = devnull
-            sys.stderr = devnull
+        # Define the model. tbabs is meant to be used with the wilm
+        # abundances (Wilms, Allen & McCray 2000; its banner says so);
+        # Sherpa's default is angr, which absorbs more for the same
+        # nH. For 3C 273 (nH 1.8e20) the switch moved gamma by -0.012
+        # and the 1 keV flux by -1.4%; with nH 3e21, by -0.2 and -20%.
+        with _quiet_c_output():
+            shp.set_xsabund(abund)
             if model_type == 'absorbed':
                 # Full model: Galactic + intrinsic absorption
                 #   xstbabs:    Galactic ISM absorption (frozen)
@@ -362,9 +395,6 @@ def fit_spectrum(grp_pha, nh_gal, redshift, gamma_value,
                 #   xspowerlaw: power law continuum
                 shp.set_source(1,
                     "xstbabs.gal * xspowerlaw.pl")
-        finally:
-            sys.stdout, sys.stderr = _so, _se
-            devnull.close()
 
         # --- Galactic absorption (always frozen) ---
         gal = shp.get_model_component("gal")
@@ -434,13 +464,15 @@ def fit_spectrum(grp_pha, nh_gal, redshift, gamma_value,
             results['nh_int'] = None
 
         # --- Confidence intervals ---
-        # Use conf() for 90% confidence (delta statistic = 2.706,
-        # for W-stat as for chi2), as XSPEC's default "error".
+        # conf() at 1 sigma (delta statistic = 1, for W-stat as for
+        # chi2), like the band-flux error below, so that every error
+        # in the table and light curve is 1 sigma. (XSPEC's "error"
+        # default is 90%, delta statistic = 2.706.)
         # The "hard minimum/maximum hit" warnings are normal —
         # they mean conf() explored to a parameter boundary while
         # mapping the error surface. The fit values are unaffected.
         try:
-            shp.set_conf_opt("sigma", 1.6)  # ~90% for 1 param
+            shp.set_conf_opt("sigma", 1.0)
             with warnings.catch_warnings():
                 warnings.simplefilter("ignore")
                 if model_type == 'absorbed':
@@ -599,7 +631,7 @@ def frozen_gamma(free_fits, defgamma, defgamma_note=None):
 def process_one(entry, nh_gal, redshift, gamma_freeze, gamma_note,
                 min_counts_fit, min_counts_gamma, emin, emax,
                 caldb_override=None, bkg_mode='use',
-                model_type='absorbed', stat='wstat'):
+                model_type='absorbed', stat='wstat', abund='wilm'):
     """
     Fit one grouped spectrum. Below min_counts_gamma counts the photon
     index is frozen at gamma_freeze (gamma_note says where it came
@@ -639,7 +671,8 @@ def process_one(entry, nh_gal, redshift, gamma_freeze, gamma_note,
     # Run fit
     fit = fit_spectrum(grp_pha, nh_gal, redshift,
                        gamma_value, freeze_gamma, emin, emax,
-                       caldb_override, bkg_mode, model_type, stat)
+                       caldb_override, bkg_mode, model_type, stat,
+                       abund)
 
     if fit == 'skipped':
         return 'skipped', None
@@ -670,7 +703,9 @@ def process_one(entry, nh_gal, redshift, gamma_freeze, gamma_note,
         f.write(f"Exposure     : {meta['exposure']:.1f} s\n")
         f.write(f"Count rate   : {meta['count_rate']:.3f} ct/s\n")
         f.write(f"Date (mid)   : {meta['date_mid']}\n")
-        f.write(f"Energy range : {emin}-{emax} keV\n\n")
+        f.write(f"Energy range : {emin}-{emax} keV\n")
+        f.write(f"Errors       : 1 sigma\n\n")
+        f.write(f"Abundances   : {abund}\n")
         f.write(f"nH (Galactic): {nh_gal} (frozen)\n")
         if model_type == 'absorbed':
             f.write(f"nH (intrinsic): {fit['nh_int']}")
@@ -954,6 +989,10 @@ def main():
     # --defgamma, and says so here for the logs.
     parser.add_argument('--defgamma-note', type=str, default=None,
                         help=argparse.SUPPRESS)
+    parser.add_argument('--abund', type=str, default='wilm',
+                        help='XSPEC abundance table for tbabs '
+                             '(default: wilm, as tbabs intends; angr '
+                             'was used before October 2026)')
     parser.add_argument('--stat', type=str, default='wstat',
                         choices=['wstat', 'chi2'],
                         help='Fit statistic: "wstat" (Poisson source '
@@ -1066,6 +1105,7 @@ def main():
     if args.model == 'absorbed':
         print(f"Redshift: {args.redshift}")
     print(f"Statistic: {stat_str}")
+    print(f"Abundances: {args.abund}")
     print(f"Energy range: {args.emin}-{args.emax} keV")
     print(f"Min counts to fit: {args.mincounts}")
     print(f"Min counts for free gamma: {args.mingamma}")
@@ -1124,7 +1164,7 @@ def main():
             status, result = process_one(
                 entry, args.nh, args.redshift, gamma_freeze, gamma_note,
                 args.mincounts, args.mingamma, args.emin, args.emax,
-                args.caldb, args.bkg, args.model, args.stat)
+                args.caldb, args.bkg, args.model, args.stat, args.abund)
             if status == 'ok':
                 all_results.append(result)
             elif status == 'failed':
@@ -1139,7 +1179,8 @@ def main():
 
     # Summary table, in OBSID order
     all_results.sort(key=lambda r: (r['obsid'], r.get('mode', '')))
-    notes = [f"Statistic: {stat_str}"]
+    notes = [f"Statistic: {stat_str}",
+             f"Abundances: {args.abund}; errors are 1 sigma"]
     if any(r.get('gamma_frozen') for r in all_results):
         notes.append(f"Under {args.mingamma} counts gamma is frozen at "
                      f"{gamma_freeze:.3f} ({gamma_note})")

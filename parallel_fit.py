@@ -330,6 +330,7 @@ def main():
     parser.add_argument('--defgamma', type=float, default=None)
     parser.add_argument('--stat', type=str, default='wstat',
                         choices=['wstat', 'chi2'])
+    parser.add_argument('--abund', type=str, default='wilm')
     parser.add_argument('--mincounts', type=int, default=40)
     parser.add_argument('--mingamma', type=int, default=200)
     parser.add_argument('--emin', type=float, default=0.3)
@@ -368,7 +369,7 @@ def main():
 
     # Build pass-through arguments
     passthrough = ['--nh', str(args.nh), '--model', args.model,
-                   '--stat', args.stat,
+                   '--stat', args.stat, '--abund', args.abund,
                    '--mincounts', str(args.mincounts),
                    '--mingamma', str(args.mingamma),
                    '--emin', str(args.emin),
